@@ -128,6 +128,7 @@ class Solution:
 @dataclass(frozen=True)
 class SolverConfig:
     adaptive_bisection: bool = False
+    closed_form_inversion: bool = False
     recursive_enumeration: bool = False
     dual_bounds: bool = False
     heuristic_incumbent: bool = False
@@ -144,6 +145,8 @@ class SolveStats:
     outer_iterations: int = 0
     inner_iterations: int = 0
     marginal_evaluations: int = 0
+    closed_form_evaluations: int = 0
+    closed_form_fallbacks: int = 0
     nodes_visited: int = 0
     bound_prunes: int = 0
     dual_solves: int = 0
@@ -195,6 +198,8 @@ class _Segment:
     branch: str
     lower: float
     upper: float
+    inverse_linear: float
+    inverse_constant: float
 
     def marginal(self, allocation: float) -> float:
         return self.market.marginal_income(allocation, self.branch)
@@ -221,13 +226,27 @@ def _segments(market: Market, budget: float) -> tuple[_Segment, ...]:
     kink = market.kink_allocation
     segments: list[_Segment] = []
 
+    def segment(branch: str, lower: float, upper: float) -> _Segment:
+        intercept, slope = market._curve(branch)
+        utilization = market.borrow / market.supply
+        retained = 1 - market.reserve_factor
+        return _Segment(
+            market=market,
+            branch=branch,
+            lower=lower,
+            upper=upper,
+            inverse_linear=retained
+            * (intercept * utilization - slope * utilization**2),
+            inverse_constant=2 * retained * slope * utilization**2,
+        )
+
     if kink > 0:
         if min(kink, upper) >= 0:
-            segments.append(_Segment(market, "high", 0.0, min(kink, upper)))
+            segments.append(segment("high", 0.0, min(kink, upper)))
         if upper >= kink:
-            segments.append(_Segment(market, "low", kink, upper))
+            segments.append(segment("low", kink, upper))
     else:
-        segments.append(_Segment(market, "low", 0.0, upper))
+        segments.append(segment("low", 0.0, upper))
 
     return tuple(segment for segment in segments if segment.lower <= segment.upper)
 
@@ -250,11 +269,21 @@ def _allocation_at_price(
     stats: SolveStats | None = None,
     *,
     adaptive: bool = False,
+    closed_form: bool = False,
 ) -> float:
     if _marginal(segment, segment.lower, stats) <= price:
         return segment.lower
     if _marginal(segment, segment.upper, stats) >= price:
         return segment.upper
+
+    if closed_form:
+        if stats is not None:
+            stats.closed_form_evaluations += 1
+        allocation = _closed_form_allocation(segment, price)
+        if allocation is not None:
+            return allocation
+        if stats is not None:
+            stats.closed_form_fallbacks += 1
 
     lower, upper = segment.lower, segment.upper
     iterations = 64 if adaptive else 80
@@ -272,12 +301,73 @@ def _allocation_at_price(
     return (lower + upper) / 2
 
 
+def _closed_form_allocation(segment: _Segment, price: float) -> float | None:
+    linear = segment.inverse_linear
+    constant = segment.inverse_constant
+
+    if price == 0:
+        if linear == 0:
+            return None
+        roots = (-constant / linear,)
+    else:
+        cubic_linear = -linear / price
+        cubic_constant = -constant / price
+        half_constant = cubic_constant / 2
+        third_linear = cubic_linear / 3
+        discriminant = half_constant**2 + third_linear**3
+        if not math.isfinite(discriminant):
+            return None
+
+        scale = max(abs(half_constant**2), abs(third_linear**3), 1.0)
+        if discriminant >= -1e-14 * scale:
+            root_discriminant = math.sqrt(max(0.0, discriminant))
+            first = math.cbrt(-half_constant + root_discriminant)
+            second = (
+                -cubic_linear / (3 * first)
+                if first != 0
+                else math.cbrt(-half_constant - root_discriminant)
+            )
+            primary = first + second
+            roots = (primary, -primary / 2) if discriminant <= 1e-14 * scale else (primary,)
+        else:
+            radius = 2 * math.sqrt(-third_linear)
+            cosine = -half_constant / math.sqrt(-(third_linear**3))
+            angle = math.acos(max(-1.0, min(1.0, cosine))) / 3
+            roots = tuple(
+                radius * math.cos(angle - 2 * math.pi * index / 3)
+                for index in range(3)
+            )
+
+    lower = 1 + segment.lower / segment.market.supply
+    upper = 1 + segment.upper / segment.market.supply
+    tolerance = max(1e-14, upper * 1e-12)
+    valid = [
+        min(upper, max(lower, root))
+        for root in roots
+        if math.isfinite(root) and lower - tolerance <= root <= upper + tolerance
+    ]
+    if not valid:
+        return None
+
+    root = min(
+        valid,
+        key=lambda value: abs(price * value**3 - linear * value - constant),
+    )
+    allocation = segment.market.supply * (root - 1)
+    allocation = min(segment.upper, max(segment.lower, allocation))
+    error = abs(segment.marginal(allocation) - price)
+    if error > max(1e-12, abs(price) * 1e-9):
+        return None
+    return allocation
+
+
 def _solve_segments(
     segments: tuple[_Segment, ...],
     budget: float,
     stats: SolveStats | None = None,
     *,
     adaptive: bool = False,
+    closed_form: bool = False,
 ) -> tuple[float, ...]:
     if sum(segment.lower for segment in segments) > budget:
         raise OptimizationError("infeasible segment lower bounds")
@@ -301,7 +391,13 @@ def _solve_segments(
         if adaptive and price in (low_price, high_price):
             break
         total = sum(
-            _allocation_at_price(segment, price, stats, adaptive=adaptive)
+            _allocation_at_price(
+                segment,
+                price,
+                stats,
+                adaptive=adaptive,
+                closed_form=closed_form,
+            )
             for segment in segments
         )
         if adaptive and abs(total - budget) <= allocation_tolerance:
@@ -318,6 +414,7 @@ def _solve_segments(
             (low_price + high_price) / 2,
             stats,
             adaptive=adaptive,
+            closed_form=closed_form,
         )
         for segment in segments
     ]
@@ -345,6 +442,7 @@ def _lagrangian_bound(
     stats: SolveStats | None,
     *,
     adaptive: bool,
+    closed_form: bool,
 ) -> _DualResult:
     if stats is not None:
         stats.dual_solves += 1
@@ -377,6 +475,7 @@ def _lagrangian_bound(
                     price,
                     stats,
                     adaptive=adaptive,
+                    closed_form=closed_form,
                 )
                 value = segment.market.income(allocation) - price * allocation
                 if value > best_value:
@@ -416,12 +515,14 @@ def _heuristic_allocation(
     stats: SolveStats | None,
     *,
     adaptive: bool,
+    closed_form: bool,
 ) -> tuple[float, ...]:
     relaxation = _lagrangian_bound(
         region_options,
         budget,
         stats,
         adaptive=adaptive,
+        closed_form=closed_form,
     )
     selected = list(relaxation.segments)
 
@@ -431,6 +532,7 @@ def _heuristic_allocation(
             relaxation.price,
             stats,
             adaptive=adaptive,
+            closed_form=closed_form,
         )
         return segment.market.income(allocation) - relaxation.price * allocation
 
@@ -463,6 +565,7 @@ def _heuristic_allocation(
         budget,
         stats,
         adaptive=adaptive,
+        closed_form=closed_form,
     )
 
 
@@ -522,6 +625,7 @@ def solve(
             budget,
             stats,
             adaptive=config.adaptive_bisection,
+            closed_form=config.closed_form_inversion,
         )
         income = sum(
             market.income(allocation)
@@ -540,6 +644,7 @@ def solve(
                 budget,
                 stats,
                 adaptive=config.adaptive_bisection,
+                closed_form=config.closed_form_inversion,
             )
             best_income = sum(
                 market.income(allocation)
@@ -574,6 +679,7 @@ def solve(
                 budget,
                 stats,
                 adaptive=config.adaptive_bisection,
+                closed_form=config.closed_form_inversion,
             ).bound
 
         def cannot_improve(bound: float) -> bool:

@@ -17,6 +17,7 @@ from .solver import Solution, SolveStats, SolverConfig, solve
 
 EXACT_FEATURES = (
     "adaptive_bisection",
+    "closed_form_inversion",
     "recursive_enumeration",
     "dual_bounds",
     "heuristic_incumbent",
@@ -24,6 +25,7 @@ EXACT_FEATURES = (
 )
 DEPENDENCIES = {
     "adaptive_bisection": frozenset(),
+    "closed_form_inversion": frozenset(),
     "recursive_enumeration": frozenset(),
     "dual_bounds": frozenset({"recursive_enumeration"}),
     "heuristic_incumbent": frozenset({"dual_bounds"}),
@@ -65,6 +67,7 @@ class ContributionResult:
 def config_for(features: set[str], *, heuristic_only: bool = False) -> SolverConfig:
     return SolverConfig(
         adaptive_bisection="adaptive_bisection" in features,
+        closed_form_inversion="closed_form_inversion" in features,
         recursive_enumeration="recursive_enumeration" in features,
         dual_bounds="dual_bounds" in features,
         heuristic_incumbent="heuristic_incumbent" in features,

@@ -102,6 +102,27 @@ class SolverTests(unittest.TestCase):
             baseline_stats.marginal_evaluations,
         )
 
+    def test_closed_form_inversion_matches_bisection(self) -> None:
+        markets = generate_markets(8, 10_000_000, 8642, "all-crossing")
+        baseline = solve(markets, 10_000_000)
+        stats = SolveStats()
+
+        closed_form = solve(
+            markets,
+            10_000_000,
+            config=SolverConfig(closed_form_inversion=True),
+            stats=stats,
+        )
+
+        self.assertAlmostEqual(closed_form.annual_income, baseline.annual_income, places=6)
+        for actual, expected in zip(
+            closed_form.allocations, baseline.allocations, strict=True
+        ):
+            self.assertAlmostEqual(actual, expected, places=3)
+        self.assertGreater(stats.closed_form_evaluations, 0)
+        self.assertEqual(stats.closed_form_fallbacks, 0)
+        self.assertEqual(stats.inner_iterations, 0)
+
     def test_recursive_enumeration_prunes_infeasible_subtrees(self) -> None:
         markets = generate_markets(6, 10_000_000, 1234, "all-crossing")
         baseline = solve(markets, 10_000_000)
