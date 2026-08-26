@@ -74,8 +74,16 @@ uv run --frozen yield-allocate examples/two_markets.toml \
 Every feature flag also has a `--no-...` form, so a preset can be modified
 without defining another preset.
 
+`--closed-form-inversion` replaces the per-market inner bisection with a cached
+cubic inverse. `--newton-price-search` applies safeguarded Newton updates to the
+common portfolio price and falls back to a bracket midpoint when needed. The
+two features are independent.
+
 The `recommended` preset is the fastest exact configuration selected by the
-fixed 20-market step-forward ablation:
+fixed 20-market step-forward [ablation](benchmarks/ablation.md). It enables
+adaptive stopping, closed-form inversion, recursive enumeration, dual bounds,
+heuristic initialization, and best-bound traversal. Newton price search remains
+available as an override but is disabled in this preset.
 
 ```sh
 uv run --frozen yield-allocate examples/two_markets.toml \

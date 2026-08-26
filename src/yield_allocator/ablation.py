@@ -307,8 +307,8 @@ def run_contributions(path: Path, *, trials: int = 3) -> ContributionResult:
 
 def format_results(measurements: list[Measurement]) -> str:
     lines = [
-        "| Round | Base | Candidate | Exact | Median s | Speedup | Nodes | Fixed solves | Marginal evaluations | Bound prunes | Gap | Selected |",
-        "| ---: | --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |",
+        "| Round | Base | Candidate | Exact | Median s | Speedup | Nodes | Fixed solves | Outer iterations | Inner iterations | Marginal evaluations | Bound prunes | Gap | Selected |",
+        "| ---: | --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |",
     ]
     for result in measurements:
         nodes = result.stats["nodes_visited"] or result.stats["combinations_visited"]
@@ -317,6 +317,8 @@ def format_results(measurements: list[Measurement]) -> str:
             f"| {'yes' if result.exact else 'no'} | {result.median_seconds:.6f} "
             f"| {result.incremental_speedup:.2f}x | {nodes} "
             f"| {result.stats['fixed_region_solves']} "
+            f"| {result.stats['outer_iterations']} "
+            f"| {result.stats['inner_iterations']} "
             f"| {result.stats['marginal_evaluations']} "
             f"| {result.stats['bound_prunes']} | {result.objective_gap:.6%} "
             f"| {'yes' if result.selected else 'no'} |"

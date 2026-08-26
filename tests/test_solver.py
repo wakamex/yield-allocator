@@ -10,7 +10,7 @@ from pathlib import Path
 from yield_allocator.ablation import run_contributions
 from yield_allocator.benchmark import generate_markets, run_benchmark
 from yield_allocator.cli import load_problem
-from yield_allocator.solver import Market, SolveStats, SolverConfig, solve
+from yield_allocator.solver import PRESETS, Market, SolveStats, SolverConfig, solve
 
 
 ROOT = Path(__file__).parents[1]
@@ -143,6 +143,24 @@ class SolverTests(unittest.TestCase):
             self.assertAlmostEqual(actual, expected, places=3)
         self.assertGreater(stats.newton_steps, 0)
         self.assertLess(stats.outer_iterations, baseline_stats.outer_iterations)
+
+    def test_recommended_preset_matches_baseline(self) -> None:
+        markets = generate_markets(8, 10_000_000, 7531, "all-crossing")
+        baseline = solve(markets, 10_000_000)
+        stats = SolveStats()
+
+        recommended = solve(
+            markets,
+            10_000_000,
+            config=PRESETS["recommended"],
+            stats=stats,
+        )
+
+        self.assertAlmostEqual(
+            recommended.annual_income, baseline.annual_income, places=6
+        )
+        self.assertGreater(stats.closed_form_evaluations, 0)
+        self.assertEqual(stats.newton_steps, 0)
 
     def test_recursive_enumeration_prunes_infeasible_subtrees(self) -> None:
         markets = generate_markets(6, 10_000_000, 1234, "all-crossing")
@@ -317,6 +335,8 @@ class EntrypointTests(unittest.TestCase):
                 command,
                 str(TEST_CASE),
                 "--adaptive-bisection",
+                "--closed-form-inversion",
+                "--newton-price-search",
                 "--recursive-enumeration",
                 "--json",
             ],
