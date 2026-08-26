@@ -6,10 +6,11 @@ import itertools
 import json
 import math
 import statistics
+import sys
 import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from .cli import load_problem
 from .solver import Solution, SolveStats, SolverConfig, solve
@@ -254,14 +255,20 @@ def valid_feature_orders() -> tuple[tuple[str, ...], ...]:
     return tuple(orders)
 
 
-def run_contributions(path: Path, *, trials: int = 3) -> ContributionResult:
+def run_contributions(
+    path: Path,
+    *,
+    trials: int = 3,
+    progress: Callable[[int, int, str], None] | None = None,
+) -> ContributionResult:
     if trials < 1:
         raise ValueError("trials must be positive")
     budget, markets = load_problem(path)
     runtimes: dict[frozenset[str], float] = {}
     optimum = None
 
-    for features in valid_feature_sets():
+    feature_sets = valid_feature_sets()
+    for completed, features in enumerate(feature_sets, start=1):
         duration, solution, _ = _measure(
             markets,
             budget,
@@ -273,6 +280,12 @@ def run_contributions(path: Path, *, trials: int = 3) -> ContributionResult:
         if abs(solution.annual_income - optimum) > max(1e-6, abs(optimum) * 1e-10):
             raise RuntimeError(f"configuration {sorted(features)} is not exact")
         runtimes[features] = duration
+        if progress is not None:
+            progress(
+                completed,
+                len(feature_sets),
+                "+".join(sorted(features)) or "baseline",
+            )
 
     orders = valid_feature_orders()
     log_contributions = {feature: 0.0 for feature in EXACT_FEATURES}
@@ -375,7 +388,15 @@ def main(argv: list[str] | None = None) -> int:
     arguments = parser().parse_args(argv)
     try:
         if arguments.contributions:
-            result = run_contributions(arguments.input, trials=arguments.trials)
+            result = run_contributions(
+                arguments.input,
+                trials=arguments.trials,
+                progress=lambda completed, total, name: print(
+                    f"[{completed}/{total}] {name}",
+                    file=sys.stderr,
+                    flush=True,
+                ),
+            )
         else:
             result = run_step_forward(arguments.input, trials=arguments.trials)
     except (OSError, ValueError) as error:

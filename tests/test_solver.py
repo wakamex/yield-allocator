@@ -404,7 +404,14 @@ class BenchmarkTests(unittest.TestCase):
         self.assertTrue(all(row.median_ms > 0 for row in rows))
 
     def test_contribution_factors_reproduce_total_speedup(self) -> None:
-        result = run_contributions(TEST_CASE, trials=1)
+        progress = []
+        result = run_contributions(
+            TEST_CASE,
+            trials=1,
+            progress=lambda completed, total, name: progress.append(
+                (completed, total, name)
+            ),
+        )
         product = 1.0
         for contribution in result.contributions:
             product *= contribution.attributed_speedup
@@ -415,6 +422,8 @@ class BenchmarkTests(unittest.TestCase):
             1.0,
             places=10,
         )
+        configurations = len(result.configuration_seconds)
+        self.assertEqual(progress[-1][:2], (configurations, configurations))
 
     def test_heuristic_only_exactness_is_measured(self) -> None:
         results = run_step_forward(TEST_CASE, trials=1)
