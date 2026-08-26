@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import heapq
 from itertools import product
 import math
 from math import isfinite
@@ -163,6 +164,13 @@ PRESETS = {
         recursive_enumeration=True,
         dual_bounds=True,
         heuristic_incumbent=True,
+    ),
+    "a5": SolverConfig(
+        adaptive_bisection=True,
+        recursive_enumeration=True,
+        dual_bounds=True,
+        heuristic_incumbent=True,
+        best_bound=True,
     ),
 }
 
@@ -452,12 +460,14 @@ def solve(
     stats: SolveStats | None = None,
 ) -> Solution:
     config = config or SolverConfig()
-    if any((config.best_bound, config.heuristic_only)):
+    if config.heuristic_only:
         raise ValueError("this solver configuration is not implemented yet")
     if config.dual_bounds and not config.recursive_enumeration:
         raise ValueError("dual_bounds requires recursive_enumeration")
     if config.heuristic_incumbent and not config.dual_bounds:
         raise ValueError("heuristic_incumbent requires dual_bounds")
+    if config.best_bound and not config.dual_bounds:
+        raise ValueError("best_bound requires dual_bounds")
     markets = tuple(markets)
     if not markets:
         raise ValueError("at least one market is required")
@@ -526,6 +536,34 @@ def solve(
             if stats is not None:
                 stats.incumbent_updates += 1
 
+        def bounds(
+            options: tuple[tuple[_Segment, ...], ...],
+        ) -> tuple[float, float]:
+            return (
+                sum(min(region.lower for region in choices) for choices in options),
+                sum(max(region.upper for region in choices) for choices in options),
+            )
+
+        def branch_index(
+            options: tuple[tuple[_Segment, ...], ...],
+        ) -> int | None:
+            return next(
+                (index for index, regions in enumerate(options) if len(regions) > 1),
+                None,
+            )
+
+        def upper_bound(options: tuple[tuple[_Segment, ...], ...]) -> float:
+            return _lagrangian_bound(
+                options,
+                budget,
+                stats,
+                adaptive=config.adaptive_bisection,
+            ).bound
+
+        def cannot_improve(bound: float) -> bool:
+            tolerance = max(1e-7, abs(best_income) * 1e-12)
+            return best_allocations is not None and bound <= best_income + tolerance
+
         def visit_bounded(
             options: tuple[tuple[_Segment, ...], ...],
             lower: float,
@@ -538,40 +576,89 @@ def solve(
                     stats.feasibility_prunes += 1
                 return
 
-            bound = _lagrangian_bound(
-                options,
-                budget,
-                stats,
-                adaptive=config.adaptive_bisection,
-            ).bound
-            tolerance = max(1e-7, abs(best_income) * 1e-12)
-            if best_allocations is not None and bound <= best_income + tolerance:
+            bound = upper_bound(options)
+            if cannot_improve(bound):
                 if stats is not None:
                     stats.bound_prunes += 1
                 return
 
-            branch_index = next(
-                (index for index, regions in enumerate(options) if len(regions) > 1),
-                None,
-            )
-            if branch_index is None:
+            index = branch_index(options)
+            if index is None:
                 consider(tuple(regions[0] for regions in options))
                 return
 
-            for segment in options[branch_index]:
+            for segment in options[index]:
                 child = list(options)
-                child[branch_index] = (segment,)
+                child[index] = (segment,)
+                child_options = tuple(child)
+                child_lower, child_upper = bounds(child_options)
                 visit_bounded(
-                    tuple(child),
-                    sum(min(region.lower for region in choices) for choices in child),
-                    sum(max(region.upper for region in choices) for choices in child),
+                    child_options,
+                    child_lower,
+                    child_upper,
                 )
 
-        visit_bounded(
-            region_sets,
-            sum(min(segment.lower for segment in regions) for regions in region_sets),
-            sum(max(segment.upper for segment in regions) for regions in region_sets),
-        )
+        if config.best_bound:
+            root_lower, root_upper = bounds(region_sets)
+            queue: list[
+                tuple[
+                    float,
+                    int,
+                    tuple[tuple[_Segment, ...], ...],
+                    float,
+                    float,
+                ]
+            ] = []
+            serial = 0
+            if root_lower <= budget <= root_upper:
+                heapq.heappush(
+                    queue,
+                    (-upper_bound(region_sets), serial, region_sets, root_lower, root_upper),
+                )
+
+            while queue:
+                negative_bound, _, options, _, _ = heapq.heappop(queue)
+                node_bound = -negative_bound
+                if stats is not None:
+                    stats.nodes_visited += 1
+                if cannot_improve(node_bound):
+                    if stats is not None:
+                        stats.bound_prunes += 1
+                    continue
+
+                index = branch_index(options)
+                if index is None:
+                    consider(tuple(regions[0] for regions in options))
+                    continue
+
+                for segment in options[index]:
+                    child = list(options)
+                    child[index] = (segment,)
+                    child_options = tuple(child)
+                    child_lower, child_upper = bounds(child_options)
+                    if child_lower > budget or child_upper < budget:
+                        if stats is not None:
+                            stats.feasibility_prunes += 1
+                        continue
+                    child_bound = upper_bound(child_options)
+                    if cannot_improve(child_bound):
+                        if stats is not None:
+                            stats.bound_prunes += 1
+                        continue
+                    serial += 1
+                    heapq.heappush(
+                        queue,
+                        (
+                            -child_bound,
+                            serial,
+                            child_options,
+                            child_lower,
+                            child_upper,
+                        ),
+                    )
+        else:
+            root_lower, root_upper = bounds(region_sets)
+            visit_bounded(region_sets, root_lower, root_upper)
     elif config.recursive_enumeration:
         suffix_lower = [0.0] * (len(markets) + 1)
         suffix_upper = [0.0] * (len(markets) + 1)
