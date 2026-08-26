@@ -78,6 +78,26 @@ class SolverTests(unittest.TestCase):
         self.assertEqual(stats.fixed_region_solves, 2)
         self.assertGreater(stats.marginal_evaluations, 0)
 
+    def test_adaptive_bisection_matches_baseline_with_fewer_evaluations(self) -> None:
+        budget, markets = load_problem(TEST_CASE)
+        baseline_stats = SolveStats()
+        adaptive_stats = SolveStats()
+
+        baseline = solve(markets, budget, stats=baseline_stats)
+        adaptive = solve(
+            markets,
+            budget,
+            config=SolverConfig(adaptive_bisection=True),
+            stats=adaptive_stats,
+        )
+
+        self.assertAlmostEqual(adaptive.annual_income, baseline.annual_income, places=6)
+        self.assertEqual(adaptive.allocations, baseline.allocations)
+        self.assertLess(
+            adaptive_stats.marginal_evaluations,
+            baseline_stats.marginal_evaluations,
+        )
+
 
 class EntrypointTests(unittest.TestCase):
     def assert_entrypoint(self, command: list[str]) -> None:

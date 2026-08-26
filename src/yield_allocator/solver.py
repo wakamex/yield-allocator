@@ -149,7 +149,10 @@ class SolveStats:
     incumbent_updates: int = 0
 
 
-PRESETS = {"a0": SolverConfig()}
+PRESETS = {
+    "a0": SolverConfig(),
+    "a1": SolverConfig(adaptive_bisection=True),
+}
 
 
 @dataclass(frozen=True)
@@ -201,7 +204,11 @@ def _validate_concavity(segment: _Segment) -> None:
 
 
 def _allocation_at_price(
-    segment: _Segment, price: float, stats: SolveStats | None = None
+    segment: _Segment,
+    price: float,
+    stats: SolveStats | None = None,
+    *,
+    adaptive: bool = False,
 ) -> float:
     if _marginal(segment, segment.lower, stats) <= price:
         return segment.lower
@@ -209,10 +216,14 @@ def _allocation_at_price(
         return segment.upper
 
     lower, upper = segment.lower, segment.upper
-    for _ in range(80):
+    iterations = 64 if adaptive else 80
+    tolerance = max(1e-7, segment.upper * 1e-14)
+    for _ in range(iterations):
         if stats is not None:
             stats.inner_iterations += 1
         middle = (lower + upper) / 2
+        if adaptive and (upper - lower <= tolerance or middle in (lower, upper)):
+            break
         if _marginal(segment, middle, stats) > price:
             lower = middle
         else:
@@ -224,6 +235,8 @@ def _solve_segments(
     segments: tuple[_Segment, ...],
     budget: float,
     stats: SolveStats | None = None,
+    *,
+    adaptive: bool = False,
 ) -> tuple[float, ...]:
     if sum(segment.lower for segment in segments) > budget:
         raise OptimizationError("infeasible segment lower bounds")
@@ -238,20 +251,33 @@ def _solve_segments(
     low_price = min(_marginal(segment, segment.upper, stats) for segment in segments)
     high_price = max(_marginal(segment, segment.lower, stats) for segment in segments)
 
-    for _ in range(100):
+    iterations = 64 if adaptive else 100
+    allocation_tolerance = max(1e-7, budget * 1e-12)
+    for _ in range(iterations):
         if stats is not None:
             stats.outer_iterations += 1
         price = (low_price + high_price) / 2
+        if adaptive and price in (low_price, high_price):
+            break
         total = sum(
-            _allocation_at_price(segment, price, stats) for segment in segments
+            _allocation_at_price(segment, price, stats, adaptive=adaptive)
+            for segment in segments
         )
+        if adaptive and abs(total - budget) <= allocation_tolerance:
+            low_price = high_price = price
+            break
         if total > budget:
             low_price = price
         else:
             high_price = price
 
     allocations = [
-        _allocation_at_price(segment, (low_price + high_price) / 2, stats)
+        _allocation_at_price(
+            segment,
+            (low_price + high_price) / 2,
+            stats,
+            adaptive=adaptive,
+        )
         for segment in segments
     ]
     residual = budget - sum(allocations)
@@ -280,7 +306,7 @@ def solve(
     stats: SolveStats | None = None,
 ) -> Solution:
     config = config or SolverConfig()
-    if config != SolverConfig():
+    if config not in PRESETS.values():
         raise ValueError("this solver configuration is not implemented yet")
     markets = tuple(markets)
     if not markets:
@@ -316,7 +342,12 @@ def solve(
             if stats is not None:
                 stats.feasibility_prunes += 1
             continue
-        allocations = _solve_segments(segments, budget, stats)
+        allocations = _solve_segments(
+            segments,
+            budget,
+            stats,
+            adaptive=config.adaptive_bisection,
+        )
         income = sum(
             market.income(allocation)
             for market, allocation in zip(markets, allocations, strict=True)
