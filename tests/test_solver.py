@@ -9,7 +9,7 @@ from pathlib import Path
 
 from yield_allocator.benchmark import generate_markets, run_benchmark
 from yield_allocator.cli import load_problem
-from yield_allocator.solver import Market, solve
+from yield_allocator.solver import Market, SolveStats, SolverConfig, solve
 
 
 ROOT = Path(__file__).parents[1]
@@ -66,6 +66,17 @@ class SolverTests(unittest.TestCase):
 
         self.assertLessEqual(solution.allocations[0], 2)
         self.assertAlmostEqual(sum(solution.allocations), 5)
+
+    def test_baseline_instrumentation(self) -> None:
+        budget, markets = load_problem(TEST_CASE)
+        stats = SolveStats()
+
+        solve(markets, budget, config=SolverConfig(), stats=stats)
+
+        self.assertEqual(stats.possible_region_combinations, 2)
+        self.assertEqual(stats.combinations_visited, 2)
+        self.assertEqual(stats.fixed_region_solves, 2)
+        self.assertGreater(stats.marginal_evaluations, 0)
 
 
 class EntrypointTests(unittest.TestCase):

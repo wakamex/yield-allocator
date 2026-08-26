@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from itertools import product
+import math
 from math import isfinite
 
 
@@ -124,6 +125,34 @@ class Solution:
 
 
 @dataclass(frozen=True)
+class SolverConfig:
+    adaptive_bisection: bool = False
+    recursive_enumeration: bool = False
+    dual_bounds: bool = False
+    heuristic_incumbent: bool = False
+    best_bound: bool = False
+    heuristic_only: bool = False
+
+
+@dataclass
+class SolveStats:
+    possible_region_combinations: int = 0
+    combinations_visited: int = 0
+    feasibility_prunes: int = 0
+    fixed_region_solves: int = 0
+    outer_iterations: int = 0
+    inner_iterations: int = 0
+    marginal_evaluations: int = 0
+    nodes_visited: int = 0
+    bound_prunes: int = 0
+    dual_solves: int = 0
+    incumbent_updates: int = 0
+
+
+PRESETS = {"a0": SolverConfig()}
+
+
+@dataclass(frozen=True)
 class _Segment:
     market: Market
     branch: str
@@ -132,6 +161,14 @@ class _Segment:
 
     def marginal(self, allocation: float) -> float:
         return self.market.marginal_income(allocation, self.branch)
+
+
+def _marginal(
+    segment: _Segment, allocation: float, stats: SolveStats | None
+) -> float:
+    if stats is not None:
+        stats.marginal_evaluations += 1
+    return segment.marginal(allocation)
 
 
 def _segments(market: Market, budget: float) -> tuple[_Segment, ...]:
@@ -163,23 +200,31 @@ def _validate_concavity(segment: _Segment) -> None:
         )
 
 
-def _allocation_at_price(segment: _Segment, price: float) -> float:
-    if segment.marginal(segment.lower) <= price:
+def _allocation_at_price(
+    segment: _Segment, price: float, stats: SolveStats | None = None
+) -> float:
+    if _marginal(segment, segment.lower, stats) <= price:
         return segment.lower
-    if segment.marginal(segment.upper) >= price:
+    if _marginal(segment, segment.upper, stats) >= price:
         return segment.upper
 
     lower, upper = segment.lower, segment.upper
     for _ in range(80):
+        if stats is not None:
+            stats.inner_iterations += 1
         middle = (lower + upper) / 2
-        if segment.marginal(middle) > price:
+        if _marginal(segment, middle, stats) > price:
             lower = middle
         else:
             upper = middle
     return (lower + upper) / 2
 
 
-def _solve_segments(segments: tuple[_Segment, ...], budget: float) -> tuple[float, ...]:
+def _solve_segments(
+    segments: tuple[_Segment, ...],
+    budget: float,
+    stats: SolveStats | None = None,
+) -> tuple[float, ...]:
     if sum(segment.lower for segment in segments) > budget:
         raise OptimizationError("infeasible segment lower bounds")
     if sum(segment.upper for segment in segments) < budget:
@@ -188,19 +233,25 @@ def _solve_segments(segments: tuple[_Segment, ...], budget: float) -> tuple[floa
     for segment in segments:
         _validate_concavity(segment)
 
-    low_price = min(segment.marginal(segment.upper) for segment in segments)
-    high_price = max(segment.marginal(segment.lower) for segment in segments)
+    if stats is not None:
+        stats.fixed_region_solves += 1
+    low_price = min(_marginal(segment, segment.upper, stats) for segment in segments)
+    high_price = max(_marginal(segment, segment.lower, stats) for segment in segments)
 
     for _ in range(100):
+        if stats is not None:
+            stats.outer_iterations += 1
         price = (low_price + high_price) / 2
-        total = sum(_allocation_at_price(segment, price) for segment in segments)
+        total = sum(
+            _allocation_at_price(segment, price, stats) for segment in segments
+        )
         if total > budget:
             low_price = price
         else:
             high_price = price
 
     allocations = [
-        _allocation_at_price(segment, (low_price + high_price) / 2)
+        _allocation_at_price(segment, (low_price + high_price) / 2, stats)
         for segment in segments
     ]
     residual = budget - sum(allocations)
@@ -221,7 +272,16 @@ def _solve_segments(segments: tuple[_Segment, ...], budget: float) -> tuple[floa
     return tuple(allocations)
 
 
-def solve(markets: list[Market] | tuple[Market, ...], budget: float) -> Solution:
+def solve(
+    markets: list[Market] | tuple[Market, ...],
+    budget: float,
+    *,
+    config: SolverConfig | None = None,
+    stats: SolveStats | None = None,
+) -> Solution:
+    config = config or SolverConfig()
+    if config != SolverConfig():
+        raise ValueError("this solver configuration is not implemented yet")
     markets = tuple(markets)
     if not markets:
         raise ValueError("at least one market is required")
@@ -240,13 +300,23 @@ def solve(markets: list[Market] | tuple[Market, ...], budget: float) -> Solution
     best_allocations: tuple[float, ...] | None = None
     best_income = float("-inf")
     region_sets = tuple(_segments(market, budget) for market in markets)
+    if stats is not None:
+        stats.possible_region_combinations = math.prod(
+            len(regions) for regions in region_sets
+        )
 
     for segments in product(*region_sets):
+        if stats is not None:
+            stats.combinations_visited += 1
         if sum(segment.lower for segment in segments) > budget:
+            if stats is not None:
+                stats.feasibility_prunes += 1
             continue
         if sum(segment.upper for segment in segments) < budget:
+            if stats is not None:
+                stats.feasibility_prunes += 1
             continue
-        allocations = _solve_segments(segments, budget)
+        allocations = _solve_segments(segments, budget, stats)
         income = sum(
             market.income(allocation)
             for market, allocation in zip(markets, allocations, strict=True)
@@ -254,6 +324,8 @@ def solve(markets: list[Market] | tuple[Market, ...], budget: float) -> Solution
         if income > best_income:
             best_income = income
             best_allocations = allocations
+            if stats is not None:
+                stats.incumbent_updates += 1
 
     if best_allocations is None:
         raise OptimizationError("no feasible allocation found")
