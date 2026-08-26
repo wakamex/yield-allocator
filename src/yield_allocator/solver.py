@@ -580,7 +580,6 @@ def _lagrangian_bound(
     closed_form: bool,
     newton: bool,
     cached: bool,
-    include_option_values: bool = False,
 ) -> _DualResult:
     if stats is not None:
         stats.dual_solves += 1
@@ -668,26 +667,7 @@ def _lagrangian_bound(
     price, (_, bound, segments, _) = min(
         candidates, key=lambda candidate: candidate[1][1]
     )
-    option_values = ()
-    if include_option_values:
-        values_by_option = []
-        for options in region_options:
-            values = []
-            for segment in options:
-                allocation = _allocation_at_price(
-                    segment,
-                    price,
-                    stats,
-                    adaptive=adaptive,
-                    closed_form=closed_form,
-                    cached=cached,
-                )
-                values.append(
-                    segment.income(allocation, cached=cached) - price * allocation
-                )
-            values_by_option.append(tuple(values))
-        option_values = tuple(values_by_option)
-    return _DualResult(bound, price, segments, option_values)
+    return _DualResult(bound, price, segments, ())
 
 
 def _heuristic_allocation(
@@ -894,15 +874,48 @@ def solve(
                 closed_form=config.closed_form_inversion,
                 newton=config.newton_price_search,
                 cached=config.cached_segment_algebra,
-                include_option_values=(
-                    config.dual_reduced_cost_fixing
-                    or config.dual_ambiguity_branching
-                ),
             )
 
         def cannot_improve(bound: float) -> bool:
             tolerance = max(1e-7, abs(best_income) * 1e-12)
             return best_allocations is not None and bound <= best_income + tolerance
+
+        def add_option_values(
+            options: tuple[tuple[_Segment, ...], ...],
+            relaxation: _DualResult,
+        ) -> _DualResult:
+            if relaxation.option_values or not (
+                config.dual_reduced_cost_fixing
+                or config.dual_ambiguity_branching
+            ):
+                return relaxation
+
+            values_by_option = []
+            for choices in options:
+                values = []
+                for segment in choices:
+                    allocation = _allocation_at_price(
+                        segment,
+                        relaxation.price,
+                        stats,
+                        adaptive=config.adaptive_bisection,
+                        closed_form=config.closed_form_inversion,
+                        cached=config.cached_segment_algebra,
+                    )
+                    values.append(
+                        segment.income(
+                            allocation,
+                            cached=config.cached_segment_algebra,
+                        )
+                        - relaxation.price * allocation
+                    )
+                values_by_option.append(tuple(values))
+            return _DualResult(
+                relaxation.bound,
+                relaxation.price,
+                relaxation.segments,
+                tuple(values_by_option),
+            )
 
         def apply_reduced_cost_fixes(
             options: tuple[tuple[_Segment, ...], ...],
@@ -967,6 +980,7 @@ def solve(
                     stats.bound_prunes += 1
                 return
 
+            relaxation = add_option_values(options, relaxation)
             options, relaxation = apply_reduced_cost_fixes(options, relaxation)
             index = branch_index(options, relaxation)
             if index is None:
@@ -1021,6 +1035,7 @@ def solve(
                         stats.bound_prunes += 1
                     continue
 
+                relaxation = add_option_values(options, relaxation)
                 options, relaxation = apply_reduced_cost_fixes(options, relaxation)
                 index = branch_index(options, relaxation)
                 if index is None:

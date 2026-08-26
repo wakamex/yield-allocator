@@ -118,6 +118,35 @@ search from 101 nodes to two. Every objective matched.
 The full ten-feature contribution benchmark was not rerun for this targeted
 follow-up.
 
+## Lazy reduced-cost fixing removes root-pruned overhead
+
+The branch values needed for reduced-cost fixing are now computed only after a
+node survives the ordinary dual-bound check. This preserves the reduction on
+hard cases without doing extra work on cases certified at the root.
+
+On the fixed 20-market case, 51 interleaved repetitions produced:
+
+| Configuration | Median s | Speedup | Nodes | Dual solves | Marginal evaluations | Branches fixed |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Without fixing | 0.027511 | 1.00x | 7 | 16 | 37,569 | 0 |
+| Lazy reduced-cost fixing | 0.006760 | 4.07x | 1 | 4 | 8,745 | 19 |
+
+On 20 deterministic 100-market all-crossing seeds, with three repetitions per
+case, lazy fixing removed the long tail while leaving the median unchanged:
+
+| Configuration | Median s | p95 s | Max s | Maximum nodes |
+| --- | ---: | ---: | ---: | ---: |
+| Without fixing | 0.017185 | 1.175628 | 1.207473 | 101 |
+| Lazy reduced-cost fixing | 0.016941 | 0.029459 | 0.030768 | 2 |
+
+The p95 improvement is 39.91x. Every objective matched.
+
+A five-seed root-certified spot check measured medians of 0.149020 versus
+0.148494 seconds at 1,000 markets and 1.532884 versus 1.507024 seconds at
+10,000 markets without and with lazy fixing. Each corresponding pair performed
+exactly the same number of marginal evaluations. The timing differences are
+run-to-run noise rather than additional algorithmic work.
+
 ## Eight-feature geo-mean factors multiply to a 797.18x speedup
 
 The earlier dependency-aware Shapley calculation benchmarks all 96 valid exact

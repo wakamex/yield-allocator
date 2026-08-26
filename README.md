@@ -79,7 +79,8 @@ cubic inverse. `--newton-price-search` applies safeguarded Newton updates to the
 common portfolio price and falls back to a bracket midpoint when needed.
 `--cached-segment-algebra` precomputes fixed coefficients and endpoint
 marginals used in the hot loops. `--dual-reduced-cost-fixing` removes a branch
-when its parent dual bound proves that it cannot beat the incumbent.
+when its parent dual bound proves that it cannot beat the incumbent. It computes
+the branch values only after the ordinary bound fails to prune the node.
 `--dual-ambiguity-branching` branches first on the market whose segment values
 are closest at the dual price.
 

@@ -318,6 +318,34 @@ class SolverTests(unittest.TestCase):
         self.assertGreater(stats.reduced_cost_fixes, 0)
         self.assertLess(stats.dual_solves, control_stats.dual_solves)
 
+    def test_dual_reduced_cost_fixing_is_lazy_when_root_prunes(self) -> None:
+        seed = 20260826 + 8 * 1_000_003 + 97_409
+        markets = generate_markets(8, 10_000_000, seed, "all-crossing")
+        control_config = replace(
+            PRESETS["recommended"],
+            dual_reduced_cost_fixing=False,
+        )
+        control_stats = SolveStats()
+        control = solve(
+            markets,
+            10_000_000,
+            config=control_config,
+            stats=control_stats,
+        )
+        stats = SolveStats()
+
+        lazy = solve(
+            markets,
+            10_000_000,
+            config=PRESETS["recommended"],
+            stats=stats,
+        )
+
+        self.assertAlmostEqual(lazy.annual_income, control.annual_income, places=6)
+        self.assertEqual(stats.nodes_visited, 1)
+        self.assertEqual(stats.reduced_cost_fixes, 0)
+        self.assertEqual(stats.marginal_evaluations, control_stats.marginal_evaluations)
+
     def test_dual_ambiguity_branching_preserves_exact_result(self) -> None:
         markets = generate_markets(8, 10_000_000, 1234, "all-crossing")
         exact = solve(markets, 10_000_000)
