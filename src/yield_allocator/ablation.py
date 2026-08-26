@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import argparse
 import gc
+import itertools
 import json
+import math
 import statistics
 import time
 from dataclasses import asdict, dataclass
@@ -42,6 +44,22 @@ class Measurement:
     annual_income: float
     objective_gap: float
     stats: dict[str, int]
+
+
+@dataclass(frozen=True)
+class Contribution:
+    feature: str
+    log_contribution: float
+    attributed_speedup: float
+    log_speedup_share: float
+
+
+@dataclass(frozen=True)
+class ContributionResult:
+    configuration_seconds: dict[str, float]
+    contributions: tuple[Contribution, ...]
+    valid_orders: int
+    total_speedup: float
 
 
 def config_for(features: set[str], *, heuristic_only: bool = False) -> SolverConfig:
@@ -200,6 +218,87 @@ def run_step_forward(
     return measurements
 
 
+def valid_feature_sets() -> tuple[frozenset[str], ...]:
+    valid = []
+    for count in range(len(EXACT_FEATURES) + 1):
+        for features in itertools.combinations(EXACT_FEATURES, count):
+            feature_set = frozenset(features)
+            if all(DEPENDENCIES[feature] <= feature_set for feature in feature_set):
+                valid.append(feature_set)
+    return tuple(valid)
+
+
+def valid_feature_orders() -> tuple[tuple[str, ...], ...]:
+    orders = []
+    for order in itertools.permutations(EXACT_FEATURES):
+        positions = {feature: index for index, feature in enumerate(order)}
+        if all(
+            positions[dependency] < positions[feature]
+            for feature, dependencies in DEPENDENCIES.items()
+            for dependency in dependencies
+        ):
+            orders.append(order)
+    return tuple(orders)
+
+
+def run_contributions(path: Path, *, trials: int = 3) -> ContributionResult:
+    if trials < 1:
+        raise ValueError("trials must be positive")
+    budget, markets = load_problem(path)
+    runtimes: dict[frozenset[str], float] = {}
+    optimum = None
+
+    for features in valid_feature_sets():
+        duration, solution, _ = _measure(
+            markets,
+            budget,
+            config_for(set(features)),
+            trials,
+        )
+        if optimum is None:
+            optimum = solution.annual_income
+        if abs(solution.annual_income - optimum) > max(1e-6, abs(optimum) * 1e-10):
+            raise RuntimeError(f"configuration {sorted(features)} is not exact")
+        runtimes[features] = duration
+
+    orders = valid_feature_orders()
+    log_contributions = {feature: 0.0 for feature in EXACT_FEATURES}
+    for order in orders:
+        enabled: frozenset[str] = frozenset()
+        for feature in order:
+            expanded = enabled | {feature}
+            log_contributions[feature] += math.log(
+                runtimes[enabled] / runtimes[expanded]
+            )
+            enabled = expanded
+
+    baseline = runtimes[frozenset()]
+    complete = runtimes[frozenset(EXACT_FEATURES)]
+    total_log_speedup = math.log(baseline / complete)
+    contributions = []
+    for feature in EXACT_FEATURES:
+        contribution = log_contributions[feature] / len(orders)
+        contributions.append(
+            Contribution(
+                feature=feature,
+                log_contribution=contribution,
+                attributed_speedup=math.exp(contribution),
+                log_speedup_share=contribution / total_log_speedup,
+            )
+        )
+
+    configuration_seconds = {
+        "+".join(sorted(features)) or "baseline": duration
+        for features, duration in runtimes.items()
+    }
+    return ContributionResult(
+        configuration_seconds=configuration_seconds,
+        contributions=tuple(contributions),
+        valid_orders=len(orders),
+        total_speedup=baseline / complete,
+    )
+
+
 def format_results(measurements: list[Measurement]) -> str:
     lines = [
         "| Round | Base | Candidate | Exact | Median s | Speedup | Nodes | Fixed solves | Marginal evaluations | Bound prunes | Gap | Selected |",
@@ -219,6 +318,28 @@ def format_results(measurements: list[Measurement]) -> str:
     return "\n".join(lines)
 
 
+def format_contributions(result: ContributionResult) -> str:
+    lines = [
+        "Each factor is the geometric mean of the feature's X-times speedup across valid addition orders. The factors multiply to the total speedup.",
+        "",
+        "| Feature | Geo-mean attributed speedup | Share of log speedup |",
+        "| --- | ---: | ---: |",
+    ]
+    for contribution in result.contributions:
+        lines.append(
+            f"| {contribution.feature} | {contribution.attributed_speedup:.4f}x "
+            f"| {contribution.log_speedup_share:.2%} |"
+        )
+    lines.extend(
+        (
+            "",
+            f"Valid feature orders: {result.valid_orders}",
+            f"Total speedup with all exact features: {result.total_speedup:.4f}x",
+        )
+    )
+    return "\n".join(lines)
+
+
 def parser() -> argparse.ArgumentParser:
     argument_parser = argparse.ArgumentParser(
         description="Run the step-forward solver feature ablation."
@@ -230,6 +351,7 @@ def parser() -> argparse.ArgumentParser:
         default=Path("benchmarks/all_crossing_20.toml"),
     )
     argument_parser.add_argument("--trials", type=int, default=3)
+    argument_parser.add_argument("--contributions", action="store_true")
     argument_parser.add_argument("--json", action="store_true")
     return argument_parser
 
@@ -237,13 +359,22 @@ def parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     arguments = parser().parse_args(argv)
     try:
-        measurements = run_step_forward(arguments.input, trials=arguments.trials)
+        if arguments.contributions:
+            result = run_contributions(arguments.input, trials=arguments.trials)
+        else:
+            result = run_step_forward(arguments.input, trials=arguments.trials)
     except (OSError, ValueError) as error:
         parser().error(str(error))
 
     if arguments.json:
-        output: Any = [asdict(measurement) for measurement in measurements]
+        output: Any
+        if isinstance(result, ContributionResult):
+            output = asdict(result)
+        else:
+            output = [asdict(measurement) for measurement in result]
         print(json.dumps(output, indent=2))
+    elif isinstance(result, ContributionResult):
+        print(format_contributions(result))
     else:
-        print(format_results(measurements))
+        print(format_results(result))
     return 0

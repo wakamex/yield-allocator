@@ -7,6 +7,7 @@ import sys
 import unittest
 from pathlib import Path
 
+from yield_allocator.ablation import run_contributions
 from yield_allocator.benchmark import generate_markets, run_benchmark
 from yield_allocator.cli import load_problem
 from yield_allocator.solver import Market, SolveStats, SolverConfig, solve
@@ -316,6 +317,19 @@ class BenchmarkTests(unittest.TestCase):
 
         self.assertEqual([row.markets for row in rows], [2, 3])
         self.assertTrue(all(row.median_ms > 0 for row in rows))
+
+    def test_contribution_factors_reproduce_total_speedup(self) -> None:
+        result = run_contributions(TEST_CASE, trials=1)
+        product = 1.0
+        for contribution in result.contributions:
+            product *= contribution.attributed_speedup
+
+        self.assertAlmostEqual(product, result.total_speedup, places=10)
+        self.assertAlmostEqual(
+            sum(item.log_speedup_share for item in result.contributions),
+            1.0,
+            places=10,
+        )
 
 
 if __name__ == "__main__":

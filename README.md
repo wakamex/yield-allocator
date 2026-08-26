@@ -87,3 +87,14 @@ Run the fixed 20-market step-forward ablation:
 ```sh
 uv --no-config run --locked yield-ablate --trials 3
 ```
+
+Attribute the total speedup across features using every dependency-valid feature
+order:
+
+```sh
+uv --no-config run --locked yield-ablate --contributions --trials 3
+```
+
+The reported geo-mean factor is the geometric mean of a feature's X-times
+speedup across valid addition orders. The feature factors multiply to the total
+speedup.

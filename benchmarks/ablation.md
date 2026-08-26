@@ -54,3 +54,27 @@ requested experiment continued until every exact feature had been toggled.
 H1 completed in 0.014212 seconds but returned $579,378.2934155287, which is
 7.965784 percent below the exact objective. That gap is too large to use H1 as
 an exact-solver replacement for this case.
+
+## Geo-mean feature factors multiply to a 70.37x speedup
+
+The dependency-aware Shapley calculation benchmarks all 12 valid exact feature
+combinations and averages each feature's X-times speedup across the 10 valid
+addition orders. This is a geometric mean. The attributed factors multiply to
+the total measured speedup.
+
+| Feature | Geo-mean attributed speedup | Share of log speedup |
+| --- | ---: | ---: |
+| Adaptive bisection | 1.6096x | 11.19% |
+| Recursive enumeration | 1.0793x | 1.79% |
+| Dual bounds | 19.4108x | 69.72% |
+| Heuristic incumbent | 1.5893x | 10.89% |
+| Best-bound traversal | 1.3131x | 6.40% |
+
+The factors multiply to 70.3696x, the fresh three-trial median speedup from A0
+to the configuration with all five exact features.
+
+The heuristic incumbent has a positive order-averaged factor because it helps
+when best-bound traversal is absent. It still remains disabled in the
+recommended preset because adding it to that specific configuration caused a
+5.43 percent regression. The Shapley factor attributes average interaction
+benefit; it does not replace the final configuration-selection test.
