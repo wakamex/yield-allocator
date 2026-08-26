@@ -190,6 +190,7 @@ PRESETS = {
     "recommended": SolverConfig(
         adaptive_bisection=True,
         closed_form_inversion=True,
+        cached_segment_algebra=True,
         recursive_enumeration=True,
         dual_bounds=True,
         heuristic_incumbent=True,

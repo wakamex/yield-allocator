@@ -161,6 +161,7 @@ class SolverTests(unittest.TestCase):
         )
         self.assertGreater(stats.closed_form_evaluations, 0)
         self.assertEqual(stats.newton_steps, 0)
+        self.assertTrue(PRESETS["recommended"].cached_segment_algebra)
 
     def test_cached_segment_algebra_matches_direct_evaluation(self) -> None:
         markets = generate_markets(8, 10_000_000, 6420, "all-crossing")
