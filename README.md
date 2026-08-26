@@ -75,6 +75,14 @@ uv --no-config run --locked yield-allocate examples/two_markets.toml \
 Every feature flag also has a `--no-...` form, so a preset can be modified
 without defining another preset.
 
+The `recommended` preset is the fastest exact configuration selected by the
+fixed 20-market step-forward ablation:
+
+```sh
+uv --no-config run --locked yield-allocate examples/two_markets.toml \
+  --preset recommended
+```
+
 Run the fixed 20-market step-forward ablation:
 
 ```sh

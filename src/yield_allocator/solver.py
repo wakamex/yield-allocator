@@ -180,6 +180,12 @@ PRESETS = {
         best_bound=True,
         heuristic_only=True,
     ),
+    "recommended": SolverConfig(
+        adaptive_bisection=True,
+        recursive_enumeration=True,
+        dual_bounds=True,
+        best_bound=True,
+    ),
 }
 
 

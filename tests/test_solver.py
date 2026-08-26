@@ -280,6 +280,19 @@ class EntrypointTests(unittest.TestCase):
         )
         self.assertEqual(json.loads(result.stdout)["budget"], 10_000_000)
 
+    def test_ablation_entrypoint(self) -> None:
+        command = shutil.which("yield-ablate")
+        self.assertIsNotNone(command)
+        result = subprocess.run(
+            [command, str(TEST_CASE), "--trials", "1", "--json"],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        output = json.loads(result.stdout)
+        self.assertEqual(output[0]["candidate"], "baseline")
+        self.assertTrue(output[0]["exact"])
+
 
 class BenchmarkTests(unittest.TestCase):
     def test_market_generation_is_repeatable(self) -> None:
