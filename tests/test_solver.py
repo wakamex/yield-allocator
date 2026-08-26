@@ -7,7 +7,7 @@ import sys
 import unittest
 from pathlib import Path
 
-from yield_allocator.ablation import run_contributions
+from yield_allocator.ablation import run_contributions, run_step_forward
 from yield_allocator.benchmark import generate_markets, run_benchmark
 from yield_allocator.cli import load_problem
 from yield_allocator.solver import PRESETS, Market, SolveStats, SolverConfig, solve
@@ -414,6 +414,16 @@ class BenchmarkTests(unittest.TestCase):
             sum(item.log_speedup_share for item in result.contributions),
             1.0,
             places=10,
+        )
+
+    def test_heuristic_only_exactness_is_measured(self) -> None:
+        results = run_step_forward(TEST_CASE, trials=1)
+        heuristic = results[-1]
+
+        self.assertEqual(heuristic.candidate, "heuristic_only")
+        self.assertEqual(
+            heuristic.exact,
+            heuristic.objective_gap <= 1e-10,
         )
 
 

@@ -209,6 +209,10 @@ def run_step_forward(
         config_for(selected, heuristic_only=True),
         trials,
     )
+    gap = max(0.0, (optimum - solution.annual_income) / optimum)
+    exact = abs(solution.annual_income - optimum) <= max(
+        1e-6, abs(optimum) * 1e-10
+    )
     measurements.append(
         Measurement(
             round=round_number,
@@ -216,11 +220,11 @@ def run_step_forward(
             candidate="heuristic_only",
             features=tuple(sorted((*selected, "heuristic_only"))),
             selected=False,
-            exact=False,
+            exact=exact,
             median_seconds=duration,
             incremental_speedup=current_time / duration,
             annual_income=solution.annual_income,
-            objective_gap=max(0.0, (optimum - solution.annual_income) / optimum),
+            objective_gap=gap,
             stats=asdict(stats),
         )
     )
