@@ -171,6 +171,38 @@ linear root path or inside the many-second branch tail. The saved
 [run-level data](results/p95-scaling-200-seed.jsonl) and
 [analysis](results/p95-scaling-200-seed-analysis.json) preserve the full result.
 
+## The previous sample maximum is quadratic while both medians are linear
+
+The same 200-seed data separates the median, p95, and sample maximum. The
+sample maximum is the slowest observed case at each size, not a population
+p100 or theoretical worst case.
+
+| Markets | Current median s | Previous median s | Current max s | Previous max s | Current max nodes | Previous max nodes |
+| ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 400 | 0.0615 | 0.0614 | 0.1650 | 17.1403 | 6 | 403 |
+| 500 | 0.0755 | 0.0756 | 0.1606 | 26.5897 | 4 | 502 |
+| 600 | 0.0897 | 0.0898 | 0.2238 | 37.5005 | 4 | 602 |
+| 750 | 0.1117 | 0.1119 | 0.2764 | 58.1453 | 3 | 751 |
+
+| Distribution statistic | Current exponent | Previous exponent |
+| --- | ---: | ---: |
+| Median | 0.949 | 0.954 |
+| p95 | 0.846 | -1.995 |
+| Sample maximum | 0.898 | 1.939 |
+
+The median is near-linear for both configurations. The previous p95 exponent
+is not meaningful because p95 moves between the root path and branch tail as
+branch probability crosses five percent. The previous sample maximum is close
+to quadratic: it visits about `n` nodes and each node scans `n` markets. Its
+maximum time divided by `n^2` stays nearly constant across these sizes.
+
+Reduced-cost fixing lowers the current maximum to between three and six nodes
+in the same sample, so its observed maximum remains near-linear. It does not
+change the theoretical worst-case class. Both exact configurations can still
+face up to `2^k` segment combinations when `k` ambiguous markets survive every
+bound. The stochastic sample found a chain of roughly `n` nodes for the
+previous solver, not the exponential tree.
+
 ## Allocated and critical market counts grow with exponent 0.215
 
 A second 200-seed run measured the current solver at 100, 200, 400, 750, 1,000,

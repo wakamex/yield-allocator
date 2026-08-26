@@ -343,6 +343,26 @@ def analyze_runs(
         }
         for configuration in configurations
     }
+    runtime_distribution = {
+        configuration: {
+            "median": [
+                statistics.median(
+                    run.seconds
+                    for run in grouped[configuration][size].values()
+                )
+                for size in sizes
+            ],
+            "p95": p95_by_configuration[configuration],
+            "sample_maximum": [
+                max(
+                    run.seconds
+                    for run in grouped[configuration][size].values()
+                )
+                for size in sizes
+            ],
+        }
+        for configuration in configurations
+    }
     rng = random.Random(seed)
     for _ in range(bootstraps):
         points = {configuration: [] for configuration in configurations}
@@ -395,6 +415,33 @@ def analyze_runs(
                     _percentile(bootstrap_exponents[configuration], 0.025),
                     _percentile(bootstrap_exponents[configuration], 0.975),
                 ),
+                "runtime_distribution": {
+                    statistic: {
+                        "seconds_by_size": dict(
+                            zip(sizes, values, strict=True)
+                        ),
+                        "exponent": _exponent(sizes, values),
+                    }
+                    for statistic, values in runtime_distribution[
+                        configuration
+                    ].items()
+                },
+                "search_distribution": {
+                    "branch_rate_by_size": {
+                        size: statistics.fmean(
+                            run.stats.get("nodes_visited", 0) > 1
+                            for run in grouped[configuration][size].values()
+                        )
+                        for size in sizes
+                    },
+                    "maximum_nodes_by_size": {
+                        size: max(
+                            run.stats.get("nodes_visited", 0)
+                            for run in grouped[configuration][size].values()
+                        )
+                        for size in sizes
+                    },
+                },
                 "growth": {
                     metric: {
                         "mean_by_size": dict(

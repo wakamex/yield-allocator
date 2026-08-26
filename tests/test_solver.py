@@ -592,6 +592,16 @@ class BenchmarkTests(unittest.TestCase):
 
         for configuration in result["configurations"].values():
             self.assertAlmostEqual(configuration["p95_exponent"], 1.0)
+            self.assertAlmostEqual(
+                configuration["runtime_distribution"]["median"]["exponent"],
+                1.0,
+            )
+            self.assertAlmostEqual(
+                configuration["runtime_distribution"]["sample_maximum"][
+                    "exponent"
+                ],
+                1.0,
+            )
             for endpoint in configuration["bootstrap_95_interval"]:
                 self.assertAlmostEqual(endpoint, 1.0)
             self.assertAlmostEqual(

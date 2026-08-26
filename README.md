@@ -4,6 +4,34 @@ This package allocates a fixed budget across utilization-based lending markets.
 It reads market state and rate curves from TOML, accounts for the rate impact of
 each deposit, and returns the highest-income allocation.
 
+## Scaling is linear in the common case and exponential in the worst case
+
+The current and previous exact configurations share a branch-and-bound worst
+case with up to `2^k` segment combinations for `k` ambiguous markets. The
+benchmarks did not observe that full tree. They observed a linear median for
+both configurations, a quadratic chain-like sample maximum for the previous
+configuration, and a near-linear sample maximum for the current configuration.
+
+The 200-seed all-crossing benchmark from 400 through 750 markets produced:
+
+| Distribution statistic | Current | Previous |
+| --- | ---: | ---: |
+| Median exponent | 0.949 | 0.954 |
+| p95 time range | 0.096s to 0.164s | 3.588s to 15.323s |
+| Sample-maximum exponent | 0.898 | 1.939 |
+| Maximum nodes visited | 6 | 751 |
+
+The previous sample maximum visited about one node per market, and every node
+scanned all markets, producing approximately quadratic time. Reduced-cost
+fixing kept the current sample maximum to six nodes. This changes the observed
+tail but does not prove a polynomial worst case. An adversarial instance can
+still defeat the bound reductions and expose the exponential tree.
+
+At 1,000 through 10,000 markets, current p95 runtime is effectively linear with
+exponent 1.005 under fixed budget and 1.007 under proportional budget. See the
+[benchmark report](benchmarks/ablation.md) and saved
+[distribution analysis](benchmarks/results/p95-scaling-200-seed-analysis.json).
+
 Run the included case:
 
 ```sh
