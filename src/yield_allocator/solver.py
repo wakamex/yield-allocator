@@ -149,6 +149,7 @@ class SolveStats:
     outer_iterations: int = 0
     inner_iterations: int = 0
     marginal_evaluations: int = 0
+    allocation_evaluations: int = 0
     closed_form_evaluations: int = 0
     closed_form_fallbacks: int = 0
     newton_steps: int = 0
@@ -338,6 +339,8 @@ def _allocation_at_price(
     closed_form: bool = False,
     cached: bool = False,
 ) -> float:
+    if stats is not None:
+        stats.allocation_evaluations += 1
     if _marginal(segment, segment.lower, stats, cached=cached) <= price:
         return segment.lower
     if _marginal(segment, segment.upper, stats, cached=cached) >= price:

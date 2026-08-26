@@ -80,6 +80,7 @@ class SolverTests(unittest.TestCase):
         self.assertEqual(stats.possible_region_combinations, 1)
         self.assertEqual(stats.combinations_visited, 1)
         self.assertEqual(stats.fixed_region_solves, 1)
+        self.assertGreater(stats.allocation_evaluations, 0)
         self.assertGreater(stats.marginal_evaluations, 0)
 
     def test_adaptive_bisection_matches_baseline_with_fewer_evaluations(self) -> None:
@@ -499,6 +500,8 @@ class EntrypointTests(unittest.TestCase):
                     "2",
                     "--configurations",
                     "current",
+                    "--budget-per-market",
+                    "100000",
                 ],
                 check=True,
                 capture_output=True,
@@ -511,6 +514,9 @@ class EntrypointTests(unittest.TestCase):
                     str(output_path),
                     "--bootstraps",
                     "10",
+                    "--sizes",
+                    "2",
+                    "3",
                     "--output",
                     str(analysis_path),
                 ],
@@ -519,10 +525,14 @@ class EntrypointTests(unittest.TestCase):
                 text=True,
             )
             analysis = json.loads(analysis_path.read_text())["analysis"]
+            run = json.loads(output_path.read_text().splitlines()[1])
 
         self.assertEqual(result.stdout, "")
         self.assertEqual(analysis["sizes"], [2, 3])
         self.assertIn("current", analysis["configurations"])
+        self.assertEqual(run["budget"], 200_000)
+        self.assertIsInstance(run["allocated_markets"], int)
+        self.assertIsInstance(run["critical_markets"], int)
 
 
 class BenchmarkTests(unittest.TestCase):
@@ -539,6 +549,14 @@ class BenchmarkTests(unittest.TestCase):
             all(0 < market.kink_allocation < 10_000_000 for market in markets)
         )
 
+    def test_all_crossing_profile_supports_large_budgets(self) -> None:
+        markets = generate_markets(4, 1_000_000_000, 1234, "all-crossing")
+
+        self.assertTrue(all(market.borrow <= market.supply for market in markets))
+        self.assertTrue(
+            all(0 < market.kink_allocation < 1_000_000_000 for market in markets)
+        )
+
     def test_small_benchmark(self) -> None:
         rows = run_benchmark(max_markets=3, trials=1, seed=1234)
 
@@ -552,9 +570,18 @@ class BenchmarkTests(unittest.TestCase):
                 markets=size,
                 case=case,
                 seed=case,
+                budget=size * 100_000,
                 seconds=size / 1_000,
                 annual_income=1,
-                stats={},
+                stats={
+                    "allocation_evaluations": size,
+                    "closed_form_evaluations": int(size**0.5) * 100,
+                    "outer_iterations": 100,
+                },
+                allocated_markets=int(size**0.5),
+                critical_markets=(
+                    0 if case == 0 else int(size**0.5) // 2
+                ),
             )
             for configuration in ("current", "previous")
             for size in (100, 1_000, 10_000)
@@ -567,6 +594,24 @@ class BenchmarkTests(unittest.TestCase):
             self.assertAlmostEqual(configuration["p95_exponent"], 1.0)
             for endpoint in configuration["bootstrap_95_interval"]:
                 self.assertAlmostEqual(endpoint, 1.0)
+            self.assertAlmostEqual(
+                configuration["growth"]["allocated_markets"]["mean_exponent"],
+                0.5,
+            )
+            self.assertAlmostEqual(
+                configuration["growth"]["critical_markets"]["mean_exponent"],
+                0.5,
+            )
+            self.assertAlmostEqual(
+                configuration["growth"]["allocation_evaluations"]["mean_exponent"],
+                1.0,
+            )
+            self.assertAlmostEqual(
+                configuration["growth"][
+                    "closed_form_evaluations_per_outer_iteration"
+                ]["mean_exponent"],
+                0.5,
+            )
 
     def test_contribution_factors_reproduce_total_speedup(self) -> None:
         progress = []

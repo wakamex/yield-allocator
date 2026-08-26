@@ -1,0 +1,101 @@
+{
+  "metadata": {
+    "type": "metadata",
+    "schema": 3,
+    "budget": null,
+    "budget_per_market": 100000.0,
+    "base_seed": 20260826,
+    "profile": "all-crossing",
+    "sizes": [
+      100,
+      200,
+      400,
+      750,
+      1000,
+      3000,
+      10000
+    ],
+    "cases": 200,
+    "configurations": [
+      "current"
+    ]
+  },
+  "analysis": {
+    "sizes": [
+      1000,
+      3000,
+      10000
+    ],
+    "configurations": {
+      "current": {
+        "p95_seconds": {
+          "1000": 0.184984259,
+          "3000": 0.540699681,
+          "10000": 1.880032678
+        },
+        "p95_exponent": 1.0074773436931592,
+        "bootstrap_median_exponent": 1.0073959982982852,
+        "bootstrap_95_interval": [
+          0.9928187891269622,
+          1.0147091893863207
+        ],
+        "growth": {
+          "allocated_markets": {
+            "mean_by_size": {
+              "1000": 21.885,
+              "3000": 52.41,
+              "10000": 146.7
+            },
+            "mean_exponent": 0.8267398993312904,
+            "bootstrap_median_exponent": 0.826722970025901,
+            "bootstrap_95_interval": [
+              0.8177705216471383,
+              0.8358731847630372
+            ]
+          },
+          "critical_markets": {
+            "mean_by_size": {
+              "1000": 21.885,
+              "3000": 52.41,
+              "10000": 146.7
+            },
+            "mean_exponent": 0.8267398993312904,
+            "bootstrap_median_exponent": 0.826722970025901,
+            "bootstrap_95_interval": [
+              0.8177705216471383,
+              0.8358731847630372
+            ]
+          },
+          "allocation_evaluations": {
+            "mean_by_size": {
+              "1000": 270740.0,
+              "3000": 807810.0,
+              "10000": 2697000.0
+            },
+            "mean_exponent": 0.9983762885367047,
+            "bootstrap_median_exponent": 0.9983725768101479,
+            "bootstrap_95_interval": [
+              0.9975763245826261,
+              0.9991777262486471
+            ]
+          },
+          "closed_form_evaluations_per_outer_iteration": {
+            "mean_by_size": {
+              "1000": 34.41480616221342,
+              "3000": 102.49914750514256,
+              "10000": 321.150235432937
+            },
+            "mean_exponent": 0.9696219565083839,
+            "bootstrap_median_exponent": 0.9696174775600078,
+            "bootstrap_95_interval": [
+              0.9606822426938001,
+              0.978656836134418
+            ]
+          }
+        }
+      }
+    },
+    "bootstraps": 50000,
+    "bootstrap_seed": 260826
+  }
+}

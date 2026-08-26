@@ -48,7 +48,12 @@ def generate_markets(
         reserve_factor = rng.uniform(0, 0.25)
 
         if profile == "all-crossing" or rng.random() < 0.5:
-            kink_allocation = rng.uniform(0.05 * budget, 0.95 * budget)
+            maximum_kink_allocation = supply * (1 / kink - 1)
+            crossing_scale = min(budget, maximum_kink_allocation)
+            kink_allocation = rng.uniform(
+                0.05 * crossing_scale,
+                0.95 * crossing_scale,
+            )
             borrow = kink * (supply + kink_allocation)
         elif rng.random() < 0.8:
             utilization = rng.uniform(0.45, 0.98 * kink)

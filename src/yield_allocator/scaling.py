@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any, Iterable
 
 from .benchmark import generate_markets
-from .solver import PRESETS, SolveStats, solve
+from .solver import PRESETS, Solution, SolveStats, solve
 
 
 CONFIGURATIONS = {
@@ -32,9 +32,14 @@ class ScalingRun:
     markets: int
     case: int
     seed: int
+    budget: float | None
     seconds: float
     annual_income: float
     stats: dict[str, int]
+    allocated_markets: int | None = None
+    critical_markets: int | None = None
+    kink_markets: int | None = None
+    capped_markets: int | None = None
     source: str = "measured"
 
 
@@ -70,6 +75,48 @@ def _percentile(values: list[float], probability: float) -> float:
     )
 
 
+def _allocation_counts(solution: Solution) -> tuple[int, int, int, int]:
+    tolerance = max(1e-7, solution.budget * 1e-12)
+    allocated = 0
+    critical = 0
+    at_kink = 0
+    at_cap = 0
+    for market, allocation in zip(
+        solution.markets, solution.allocations, strict=True
+    ):
+        if allocation <= tolerance:
+            continue
+        allocated += 1
+        cap = (
+            solution.budget
+            if market.max_allocation is None
+            else market.max_allocation
+        )
+        capped = cap - allocation <= tolerance
+        kinked = (
+            tolerance < market.kink_allocation < cap - tolerance
+            and abs(allocation - market.kink_allocation) <= tolerance
+        )
+        at_cap += capped
+        at_kink += kinked
+        critical += not capped and not kinked
+    return allocated, critical, at_kink, at_cap
+
+
+def _growth_value(run: ScalingRun, metric: str) -> float | None:
+    if metric == "allocated_markets":
+        return run.allocated_markets
+    if metric == "critical_markets":
+        return run.critical_markets
+    if metric == "allocation_evaluations":
+        return run.stats.get("allocation_evaluations")
+    if metric == "closed_form_evaluations_per_outer_iteration":
+        outer_iterations = run.stats.get("outer_iterations", 0)
+        if outer_iterations:
+            return run.stats.get("closed_form_evaluations", 0) / outer_iterations
+    return None
+
+
 def measure(
     output: Path,
     *,
@@ -79,6 +126,7 @@ def measure(
     budget: float,
     seed: int,
     profile: str,
+    budget_per_market: float | None = None,
     overwrite: bool = False,
 ) -> None:
     if cases < 1:
@@ -87,14 +135,17 @@ def measure(
         raise ValueError("market sizes must be positive")
     if len(set(sizes)) != len(sizes):
         raise ValueError("market sizes must be unique")
+    if budget_per_market is not None and budget_per_market <= 0:
+        raise ValueError("budget per market must be positive")
 
     mode = "w" if overwrite else "x"
     output.parent.mkdir(parents=True, exist_ok=True)
     with output.open(mode, encoding="utf-8") as stream:
         metadata = {
             "type": "metadata",
-            "schema": 1,
-            "budget": budget,
+            "schema": 3,
+            "budget": budget if budget_per_market is None else None,
+            "budget_per_market": budget_per_market,
             "base_seed": seed,
             "profile": profile,
             "sizes": sizes,
@@ -104,17 +155,29 @@ def measure(
         stream.write(json.dumps(metadata, separators=(",", ":")) + "\n")
         stream.flush()
 
-        warmup = generate_markets(min(sizes), budget, seed - 1, profile)
+        warmup_budget = (
+            budget
+            if budget_per_market is None
+            else budget_per_market * min(sizes)
+        )
+        warmup = generate_markets(
+            min(sizes), warmup_budget, seed - 1, profile
+        )
         for name in configurations:
-            solve(warmup, budget, config=CONFIGURATIONS[name])
+            solve(warmup, warmup_budget, config=CONFIGURATIONS[name])
 
         completed = 0
         total = len(sizes) * cases * len(configurations)
         progress_interval = max(1, total // 100)
         for size in sizes:
+            case_budget = (
+                budget if budget_per_market is None else budget_per_market * size
+            )
             for case in range(cases):
                 case_seed = seed + size * 1_000_003 + case * 97_409
-                markets = generate_markets(size, budget, case_seed, profile)
+                markets = generate_markets(
+                    size, case_budget, case_seed, profile
+                )
                 order = (
                     configurations
                     if case % 2 == 0
@@ -130,7 +193,7 @@ def measure(
                     try:
                         solution = solve(
                             markets,
-                            budget,
+                            case_budget,
                             config=CONFIGURATIONS[name],
                             stats=stats,
                         )
@@ -138,14 +201,20 @@ def measure(
                         elapsed = (time.perf_counter_ns() - started) / 1_000_000_000
                         if was_enabled:
                             gc.enable()
+                    allocated, critical, kinked, capped = _allocation_counts(solution)
                     run = ScalingRun(
                         configuration=name,
                         markets=size,
                         case=case,
                         seed=case_seed,
+                        budget=case_budget,
                         seconds=elapsed,
                         annual_income=solution.annual_income,
                         stats=asdict(stats),
+                        allocated_markets=allocated,
+                        critical_markets=critical,
+                        kink_markets=kinked,
+                        capped_markets=capped,
                     )
                     stream.write(
                         json.dumps(
@@ -180,9 +249,14 @@ def load_runs(path: Path) -> tuple[dict[str, Any], list[ScalingRun]]:
             markets=item["markets"],
             case=item["case"],
             seed=item["seed"],
+            budget=item.get("budget"),
             seconds=item["seconds"],
             annual_income=item["annual_income"],
             stats=item["stats"],
+            allocated_markets=item.get("allocated_markets"),
+            critical_markets=item.get("critical_markets"),
+            kink_markets=item.get("kink_markets"),
+            capped_markets=item.get("capped_markets"),
             source=item.get("source", "measured"),
         )
         for item in lines[1:]
@@ -203,10 +277,10 @@ def analyze_runs(
         raise ValueError("analysis requires at least one run")
     configurations = tuple(sorted({run.configuration for run in runs}))
     sizes = tuple(sorted({run.markets for run in runs}))
-    grouped = {
+    grouped: dict[str, dict[int, dict[int, ScalingRun]]] = {
         configuration: {
             size: {
-                run.case: run.seconds
+                run.case: run
                 for run in runs
                 if run.configuration == configuration and run.markets == size
             }
@@ -226,7 +300,8 @@ def analyze_runs(
 
     p95_by_configuration = {
         configuration: [
-            _p95(grouped[configuration][size].values()) for size in sizes
+            _p95(run.seconds for run in grouped[configuration][size].values())
+            for size in sizes
         ]
         for configuration in configurations
     }
@@ -235,20 +310,75 @@ def analyze_runs(
         for configuration, values in p95_by_configuration.items()
     }
     bootstrap_exponents = {configuration: [] for configuration in configurations}
+    metric_names = (
+        "allocated_markets",
+        "critical_markets",
+        "allocation_evaluations",
+        "closed_form_evaluations_per_outer_iteration",
+    )
+    growth_points: dict[str, dict[str, list[float]]] = {
+        configuration: {} for configuration in configurations
+    }
+    for configuration in configurations:
+        for metric in metric_names:
+            values_by_size = []
+            for size in sizes:
+                values = [
+                    _growth_value(run, metric)
+                    for run in grouped[configuration][size].values()
+                ]
+                if any(value is None for value in values):
+                    break
+                mean_value = statistics.fmean(
+                    value for value in values if value is not None
+                )
+                if mean_value <= 0:
+                    break
+                values_by_size.append(mean_value)
+            else:
+                growth_points[configuration][metric] = values_by_size
+    bootstrap_growth = {
+        configuration: {
+            metric: [] for metric in growth_points[configuration]
+        }
+        for configuration in configurations
+    }
     rng = random.Random(seed)
     for _ in range(bootstraps):
         points = {configuration: [] for configuration in configurations}
+        sampled_growth = {
+            configuration: {
+                metric: [] for metric in growth_points[configuration]
+            }
+            for configuration in configurations
+        }
         for size in sizes:
             cases = cases_by_size[size]
             sampled = [cases[rng.randrange(len(cases))] for _ in cases]
             for configuration in configurations:
                 points[configuration].append(
-                    _p95(grouped[configuration][size][case] for case in sampled)
+                    _p95(
+                        grouped[configuration][size][case].seconds
+                        for case in sampled
+                    )
                 )
+                for metric in growth_points[configuration]:
+                    sampled_growth[configuration][metric].append(
+                        statistics.fmean(
+                            _growth_value(
+                                grouped[configuration][size][case], metric
+                            )
+                            for case in sampled
+                        )
+                    )
         for configuration in configurations:
             bootstrap_exponents[configuration].append(
                 _exponent(sizes, points[configuration])
             )
+            for metric, values in sampled_growth[configuration].items():
+                bootstrap_growth[configuration][metric].append(
+                    _exponent(sizes, values)
+                )
 
     return {
         "sizes": sizes,
@@ -265,6 +395,26 @@ def analyze_runs(
                     _percentile(bootstrap_exponents[configuration], 0.025),
                     _percentile(bootstrap_exponents[configuration], 0.975),
                 ),
+                "growth": {
+                    metric: {
+                        "mean_by_size": dict(
+                            zip(sizes, values, strict=True)
+                        ),
+                        "mean_exponent": _exponent(sizes, values),
+                        "bootstrap_median_exponent": statistics.median(
+                            bootstrap_growth[configuration][metric]
+                        ),
+                        "bootstrap_95_interval": (
+                            _percentile(
+                                bootstrap_growth[configuration][metric], 0.025
+                            ),
+                            _percentile(
+                                bootstrap_growth[configuration][metric], 0.975
+                            ),
+                        ),
+                    }
+                    for metric, values in growth_points[configuration].items()
+                },
             }
             for configuration in configurations
         },
@@ -292,6 +442,7 @@ def parser() -> argparse.ArgumentParser:
         default=tuple(CONFIGURATIONS),
     )
     run_parser.add_argument("--budget", type=float, default=10_000_000)
+    run_parser.add_argument("--budget-per-market", type=float)
     run_parser.add_argument("--seed", type=int, default=20260826)
     run_parser.add_argument(
         "--profile", choices=("mixed", "all-crossing"), default="all-crossing"
@@ -304,6 +455,7 @@ def parser() -> argparse.ArgumentParser:
     analyze_parser.add_argument("input", type=Path)
     analyze_parser.add_argument("--bootstraps", type=int, default=20_000)
     analyze_parser.add_argument("--seed", type=int, default=260826)
+    analyze_parser.add_argument("--sizes", type=int, nargs="+")
     analyze_parser.add_argument("--output", type=Path)
     return argument_parser
 
@@ -317,6 +469,7 @@ def main(argv: list[str] | None = None) -> int:
             cases=arguments.cases,
             configurations=tuple(arguments.configurations),
             budget=arguments.budget,
+            budget_per_market=arguments.budget_per_market,
             seed=arguments.seed,
             profile=arguments.profile,
             overwrite=arguments.overwrite,
@@ -324,6 +477,9 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     metadata, runs = load_runs(arguments.input)
+    if arguments.sizes is not None:
+        selected_sizes = set(arguments.sizes)
+        runs = [run for run in runs if run.markets in selected_sizes]
     result = analyze_runs(runs, bootstraps=arguments.bootstraps, seed=arguments.seed)
     output = json.dumps({"metadata": metadata, "analysis": result}, indent=2)
     if arguments.output is None:

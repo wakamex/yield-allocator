@@ -171,6 +171,100 @@ linear root path or inside the many-second branch tail. The saved
 [run-level data](results/p95-scaling-200-seed.jsonl) and
 [analysis](results/p95-scaling-200-seed-analysis.json) preserve the full result.
 
+## Allocated and critical market counts grow with exponent 0.215
+
+A second 200-seed run measured the current solver at 100, 200, 400, 750, 1,000,
+3,000, and 10,000 markets. An allocated market has a final allocation above the
+solver tolerance. A critical market has a positive final allocation strictly
+inside a segment, rather than at a kink or allocation cap.
+
+| Markets | Mean allocated | Mean critical |
+| ---: | ---: | ---: |
+| 100 | 5.110 | 5.080 |
+| 200 | 6.575 | 6.575 |
+| 400 | 8.095 | 8.095 |
+| 750 | 9.420 | 9.420 |
+| 1,000 | 10.430 | 10.430 |
+| 3,000 | 11.740 | 11.740 |
+| 10,000 | 14.110 | 14.110 |
+
+| Metric | Mean-count exponent | 95 percent bootstrap interval |
+| --- | ---: | ---: |
+| Allocated markets | 0.2148 | 0.2050 to 0.2250 |
+| Critical markets | 0.2156 | 0.2056 to 0.2260 |
+| Allocation-at-price probes | 0.9608 | 0.9526 to 0.9685 |
+| Closed-form evaluations per price iteration | 0.4677 | 0.4597 to 0.4759 |
+
+Allocated and critical markets therefore grow at effectively the same strongly
+sublinear rate on this distribution. No final allocation landed at a kink. Six
+of the 200 cases at 100 markets placed the full budget into one capped market;
+all larger cases had identical allocated and critical counts.
+
+The solver still performs a nearly linear number of allocation-at-price probes
+because every dual-price evaluation scans every market. Closed-form work grows
+faster than the final critical count because markets can be interior at
+temporary prices during the search without being interior in the final
+allocation. The saved [run-level data](results/market-growth-200-seed.jsonl) and
+[analysis](results/market-growth-200-seed-analysis.json) preserve the full
+result.
+
+## Proportional budget raises the critical-market exponent to 0.714
+
+The same 200 seeds and sizes were rerun with budget equal to $100,000 times the
+number of markets. Budget therefore grows from $10 million at 100 markets to
+$1 billion at 10,000 markets. Kink allocations are limited to each market's
+feasible maximum so generated borrow never exceeds supply.
+
+| Markets | Fixed-budget critical mean | Proportional-budget critical mean |
+| ---: | ---: | ---: |
+| 100 | 5.080 | 5.080 |
+| 200 | 6.575 | 9.270 |
+| 400 | 8.095 | 11.425 |
+| 750 | 9.420 | 16.950 |
+| 1,000 | 10.430 | 21.885 |
+| 3,000 | 11.740 | 52.410 |
+| 10,000 | 14.110 | 146.700 |
+
+| Metric | Fixed-budget exponent | Proportional-budget exponent | Proportional 95 percent interval |
+| --- | ---: | ---: | ---: |
+| Allocated markets | 0.2148 | 0.7134 | 0.7054 to 0.7219 |
+| Critical markets | 0.2156 | 0.7143 | 0.7059 to 0.7230 |
+| Allocation-at-price probes | 0.9608 | 0.9737 | 0.9665 to 0.9803 |
+| Closed-form evaluations per price iteration | 0.4677 | 0.8661 | 0.8593 to 0.8732 |
+| Runtime p95 | 0.8220 | 0.9113 | 0.8577 to 0.9208 |
+
+Proportional budget increases the number of markets used, but the count remains
+sublinear. The allocated fraction falls from 5.11 percent at 100 markets to
+1.47 percent at 10,000. This is consistent with larger pools producing better
+extreme candidates and concentrating the additional budget in a shrinking
+fraction of the available markets over the measured range.
+
+The exponent is not constant across the range. A separate fit over 1,000,
+3,000, and 10,000 markets gives:
+
+| Metric | Fixed-budget high-size exponent | Proportional-budget high-size exponent | Proportional 95 percent interval |
+| --- | ---: | ---: | ---: |
+| Allocated markets | 0.1316 | 0.8267 | 0.8178 to 0.8359 |
+| Critical markets | 0.1316 | 0.8267 | 0.8178 to 0.8359 |
+| Allocation-at-price probes | 1.0022 | 0.9984 | 0.9976 to 0.9992 |
+| Closed-form evaluations per price iteration | 0.5574 | 0.9696 | 0.9607 to 0.9787 |
+| Runtime p95 | 1.0048 | 1.0075 | 0.9928 to 1.0147 |
+
+The proportional-budget allocation count is still sublinear through 10,000
+markets, but its local exponent rises from 0.714 over the full range to 0.827
+over the high-size range. The data therefore does not support treating 0.714 as
+an asymptotic exponent. Runtime and allocation probes are already linear over
+the high-size range.
+
+Allocated and critical counts remain nearly identical. The only difference is
+the same six capped 100-market cases seen in the fixed-budget run. The saved
+[run-level data](results/market-growth-proportional-budget-200-seed.jsonl),
+[full-range analysis](results/market-growth-proportional-budget-200-seed-analysis.json),
+and [high-size analysis](results/market-growth-proportional-budget-200-seed-high-analysis.json)
+preserve the full result. The matching
+[fixed-budget high-size analysis](results/market-growth-200-seed-high-analysis.json)
+supports the comparison.
+
 ## Eight-feature geo-mean factors multiply to a 797.18x speedup
 
 The earlier dependency-aware Shapley calculation benchmarks all 96 valid exact

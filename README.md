@@ -73,13 +73,37 @@ uv run --locked yield-scaling analyze benchmarks/results/p95-scaling.jsonl \
   --output benchmarks/results/p95-scaling-analysis.json
 ```
 
+Pass `--sizes 1000 3000 10000` to the analyze command to fit a local exponent
+without rerunning measurements.
+
 The run command records the seed, market count, configuration, elapsed time,
-objective, and solver counters for every case. It writes each record as soon as
-the solve finishes so partial results survive an interrupted long run.
+objective, solver counters, positive allocations, interior-critical
+allocations, kink allocations, and capped allocations for every case. It writes
+each record as soon as the solve finishes so partial results survive an
+interrupted long run.
 
 The committed 200-seed [run-level measurements](benchmarks/results/p95-scaling-200-seed.jsonl)
 and [bootstrap analysis](benchmarks/results/p95-scaling-200-seed-analysis.json)
 can be reanalyzed without rerunning the solver.
+
+The committed 200-seed [market-growth measurements](benchmarks/results/market-growth-200-seed.jsonl)
+and [growth analysis](benchmarks/results/market-growth-200-seed-analysis.json)
+cover 100 through 10,000 markets.
+
+Scale budget with market count by setting a per-market amount. This overrides
+the fixed `--budget` value:
+
+```sh
+uv run --locked yield-scaling run benchmarks/results/proportional.jsonl \
+  --sizes 100 200 400 750 1000 3000 10000 \
+  --cases 200 \
+  --configurations current \
+  --budget-per-market 100000
+```
+
+The committed [proportional-budget measurements](benchmarks/results/market-growth-proportional-budget-200-seed.jsonl)
+and [analysis](benchmarks/results/market-growth-proportional-budget-200-seed-analysis.json)
+use $100,000 per market.
 
 Select a solver preset or override individual features:
 
