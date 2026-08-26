@@ -7,13 +7,13 @@ each deposit, and returns the highest-income allocation.
 Run the included case:
 
 ```sh
-uv run --frozen yield-allocate examples/two_markets.toml
+uv run --locked yield-allocate examples/two_markets.toml
 ```
 
 Get machine-readable output:
 
 ```sh
-uv run --frozen yield-allocate examples/two_markets.toml --json
+uv run --locked yield-allocate examples/two_markets.toml --json
 ```
 
 The input has one budget and one table per market:
@@ -39,13 +39,13 @@ Rates use decimal APR values.
 Run the tests:
 
 ```sh
-uv run --frozen python -m unittest discover -s tests -v
+uv run --locked python -m unittest discover -s tests -v
 ```
 
 Run the deterministic stochastic benchmark through 10 markets:
 
 ```sh
-uv run --frozen yield-benchmark --max-markets 10 --trials 5
+uv run --locked yield-benchmark --max-markets 10 --trials 5
 ```
 
 The default `mixed` profile generates markets below the kink, above an
@@ -53,7 +53,7 @@ unreachable kink, and above a kink reachable within the budget. The
 `all-crossing` profile is an exponential-scaling stress test:
 
 ```sh
-uv run --frozen yield-benchmark \
+uv run --locked yield-benchmark \
   --profile all-crossing --max-markets 10 --trials 3
 ```
 
@@ -61,12 +61,32 @@ The seed defaults to `20260826` and can be changed with `--seed`. Market inputs
 are identical for repeated runs with the same seed, market count, trial, and
 profile. Runtime still varies with host load.
 
+Save every stochastic scaling run as JSONL, then bootstrap the p95 exponent
+from the saved measurements:
+
+```sh
+uv run --locked yield-scaling run benchmarks/results/p95-scaling.jsonl \
+  --sizes 400 500 600 750 --cases 200
+
+uv run --locked yield-scaling analyze benchmarks/results/p95-scaling.jsonl \
+  --bootstraps 50000 \
+  --output benchmarks/results/p95-scaling-analysis.json
+```
+
+The run command records the seed, market count, configuration, elapsed time,
+objective, and solver counters for every case. It writes each record as soon as
+the solve finishes so partial results survive an interrupted long run.
+
+The committed 200-seed [run-level measurements](benchmarks/results/p95-scaling-200-seed.jsonl)
+and [bootstrap analysis](benchmarks/results/p95-scaling-200-seed-analysis.json)
+can be reanalyzed without rerunning the solver.
+
 Select a solver preset or override individual features:
 
 ```sh
-uv run --frozen yield-allocate examples/two_markets.toml --preset a5
+uv run --locked yield-allocate examples/two_markets.toml --preset a5
 
-uv run --frozen yield-allocate examples/two_markets.toml \
+uv run --locked yield-allocate examples/two_markets.toml \
   --adaptive-bisection \
   --recursive-enumeration
 ```
@@ -92,21 +112,21 @@ initialization, and best-bound traversal. Newton price search and ambiguity
 branching remain available as overrides but are disabled in this preset.
 
 ```sh
-uv run --frozen yield-allocate examples/two_markets.toml \
+uv run --locked yield-allocate examples/two_markets.toml \
   --preset recommended
 ```
 
 Run the fixed 20-market step-forward ablation:
 
 ```sh
-uv run --frozen yield-ablate --trials 3
+uv run --locked yield-ablate --trials 3
 ```
 
 Attribute the total speedup across features using every dependency-valid feature
 order:
 
 ```sh
-uv run --frozen yield-ablate --contributions --trials 3
+uv run --locked yield-ablate --contributions --trials 3
 ```
 
 Progress is written to stderr as `[completed/total] configuration`. JSON output

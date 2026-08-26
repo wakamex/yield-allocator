@@ -5,12 +5,14 @@ from dataclasses import replace
 import shutil
 import subprocess
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
 from yield_allocator.ablation import run_contributions, run_step_forward
 from yield_allocator.benchmark import generate_markets, run_benchmark
 from yield_allocator.cli import load_problem
+from yield_allocator.scaling import ScalingRun, analyze_runs
 from yield_allocator.solver import PRESETS, Market, SolveStats, SolverConfig, solve
 
 
@@ -479,6 +481,49 @@ class EntrypointTests(unittest.TestCase):
         self.assertEqual(output[0]["candidate"], "baseline")
         self.assertTrue(output[0]["exact"])
 
+    def test_scaling_entrypoint(self) -> None:
+        command = shutil.which("yield-scaling")
+        self.assertIsNotNone(command)
+        with tempfile.TemporaryDirectory() as directory:
+            output_path = Path(directory) / "runs.jsonl"
+            analysis_path = Path(directory) / "analysis.json"
+            subprocess.run(
+                [
+                    command,
+                    "run",
+                    str(output_path),
+                    "--sizes",
+                    "2",
+                    "3",
+                    "--cases",
+                    "2",
+                    "--configurations",
+                    "current",
+                ],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            result = subprocess.run(
+                [
+                    command,
+                    "analyze",
+                    str(output_path),
+                    "--bootstraps",
+                    "10",
+                    "--output",
+                    str(analysis_path),
+                ],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            analysis = json.loads(analysis_path.read_text())["analysis"]
+
+        self.assertEqual(result.stdout, "")
+        self.assertEqual(analysis["sizes"], [2, 3])
+        self.assertIn("current", analysis["configurations"])
+
 
 class BenchmarkTests(unittest.TestCase):
     def test_market_generation_is_repeatable(self) -> None:
@@ -499,6 +544,29 @@ class BenchmarkTests(unittest.TestCase):
 
         self.assertEqual([row.markets for row in rows], [2, 3])
         self.assertTrue(all(row.median_ms > 0 for row in rows))
+
+    def test_scaling_analysis_recovers_linear_exponent(self) -> None:
+        runs = [
+            ScalingRun(
+                configuration=configuration,
+                markets=size,
+                case=case,
+                seed=case,
+                seconds=size / 1_000,
+                annual_income=1,
+                stats={},
+            )
+            for configuration in ("current", "previous")
+            for size in (100, 1_000, 10_000)
+            for case in range(20)
+        ]
+
+        result = analyze_runs(runs, bootstraps=100, seed=1)
+
+        for configuration in result["configurations"].values():
+            self.assertAlmostEqual(configuration["p95_exponent"], 1.0)
+            for endpoint in configuration["bootstrap_95_interval"]:
+                self.assertAlmostEqual(endpoint, 1.0)
 
     def test_contribution_factors_reproduce_total_speedup(self) -> None:
         progress = []

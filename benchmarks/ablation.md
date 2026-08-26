@@ -147,6 +147,30 @@ A five-seed root-certified spot check measured medians of 0.149020 versus
 exactly the same number of marginal evaluations. The timing differences are
 run-to-run noise rather than additional algorithmic work.
 
+## Stochastic p95 has no stable exponent across the branch boundary
+
+A 200-seed follow-up saved every run for the current and previous recommended
+configurations at 400, 500, 600, and 750 markets. The analysis uses 50,000
+paired bootstrap resamples.
+
+| Markets | Current p95 s | Previous p95 s |
+| ---: | ---: | ---: |
+| 400 | 0.096215 | 14.993219 |
+| 500 | 0.111703 | 12.016145 |
+| 600 | 0.130646 | 15.322830 |
+| 750 | 0.163689 | 3.588037 |
+
+The current p95 exponent is 0.846, with a 95 percent bootstrap interval from
+0.325 to 1.071. It is consistent with linear scaling over this short size
+range, but the interval is wide.
+
+The previous p95 exponent is -1.995, with an interval from -9.238 to 4.071.
+This is not a useful complexity estimate. Branch probability is close to five
+percent at the larger sizes, so a bootstrap sample can place p95 either on the
+linear root path or inside the many-second branch tail. The saved
+[run-level data](results/p95-scaling-200-seed.jsonl) and
+[analysis](results/p95-scaling-200-seed-analysis.json) preserve the full result.
+
 ## Eight-feature geo-mean factors multiply to a 797.18x speedup
 
 The earlier dependency-aware Shapley calculation benchmarks all 96 valid exact

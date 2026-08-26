@@ -13,6 +13,7 @@ dependencies = []
 yield-allocate = "yield_allocator.cli:main"
 yield-ablate = "yield_allocator.ablation:main"
 yield-benchmark = "yield_allocator.benchmark:main"
+yield-scaling = "yield_allocator.scaling:main"
 
 [tool.uv.build-backend]
 module-name = "yield_allocator"

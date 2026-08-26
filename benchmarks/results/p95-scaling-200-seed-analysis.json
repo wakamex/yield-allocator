@@ -1,0 +1,60 @@
+{
+  "metadata": {
+    "type": "metadata",
+    "schema": 1,
+    "budget": 10000000,
+    "base_seed": 20260826,
+    "profile": "all-crossing",
+    "sizes": [
+      400,
+      500,
+      600,
+      750
+    ],
+    "cases": 200,
+    "configurations": [
+      "current",
+      "previous"
+    ]
+  },
+  "analysis": {
+    "sizes": [
+      400,
+      500,
+      600,
+      750
+    ],
+    "configurations": {
+      "current": {
+        "p95_seconds": {
+          "400": 0.096215093,
+          "500": 0.111703225,
+          "600": 0.130645589,
+          "750": 0.163688952
+        },
+        "p95_exponent": 0.8464028288594896,
+        "bootstrap_median_exponent": 0.7719211360489121,
+        "bootstrap_95_interval": [
+          0.3246042932592291,
+          1.071161210469299
+        ]
+      },
+      "previous": {
+        "p95_seconds": {
+          "400": 14.993219452,
+          "500": 12.016144835,
+          "600": 15.322830372,
+          "750": 3.588036534
+        },
+        "p95_exponent": -1.9948759318884992,
+        "bootstrap_median_exponent": -2.039885054186125,
+        "bootstrap_95_interval": [
+          -9.238309271452538,
+          4.070736725426015
+        ]
+      }
+    },
+    "bootstraps": 50000,
+    "bootstrap_seed": 260826
+  }
+}
