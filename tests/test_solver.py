@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 import shutil
 import subprocess
 import sys
@@ -284,6 +285,58 @@ class SolverTests(unittest.TestCase):
         self.assertAlmostEqual(best_bound.annual_income, depth_first.annual_income, places=6)
         self.assertGreater(stats.nodes_visited, 0)
 
+    def test_dual_reduced_cost_fixing_preserves_exact_result(self) -> None:
+        markets = generate_markets(8, 10_000_000, 1234, "all-crossing")
+        exact = solve(markets, 10_000_000)
+        control_stats = SolveStats()
+        solve(
+            markets,
+            10_000_000,
+            config=PRESETS["recommended"],
+            stats=control_stats,
+        )
+        stats = SolveStats()
+
+        fixed = solve(
+            markets,
+            10_000_000,
+            config=replace(
+                PRESETS["recommended"],
+                dual_reduced_cost_fixing=True,
+            ),
+            stats=stats,
+        )
+
+        self.assertAlmostEqual(fixed.annual_income, exact.annual_income, places=6)
+        self.assertGreater(stats.reduced_cost_fixes, 0)
+        self.assertLess(stats.dual_solves, control_stats.dual_solves)
+
+    def test_dual_ambiguity_branching_preserves_exact_result(self) -> None:
+        markets = generate_markets(8, 10_000_000, 1234, "all-crossing")
+        exact = solve(markets, 10_000_000)
+        control_stats = SolveStats()
+        solve(
+            markets,
+            10_000_000,
+            config=PRESETS["recommended"],
+            stats=control_stats,
+        )
+        stats = SolveStats()
+
+        prioritized = solve(
+            markets,
+            10_000_000,
+            config=replace(
+                PRESETS["recommended"],
+                dual_ambiguity_branching=True,
+            ),
+            stats=stats,
+        )
+
+        self.assertAlmostEqual(prioritized.annual_income, exact.annual_income, places=6)
+        self.assertGreater(stats.ambiguity_branches, 0)
+        self.assertLess(stats.nodes_visited, control_stats.nodes_visited)
+
     def test_heuristic_only_returns_feasible_bounded_result(self) -> None:
         markets = generate_markets(8, 10_000_000, 1357, "all-crossing")
         exact = solve(
@@ -362,6 +415,9 @@ class EntrypointTests(unittest.TestCase):
                 "--newton-price-search",
                 "--cached-segment-algebra",
                 "--recursive-enumeration",
+                "--dual-bounds",
+                "--dual-reduced-cost-fixing",
+                "--dual-ambiguity-branching",
                 "--json",
             ],
             check=True,

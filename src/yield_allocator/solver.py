@@ -133,6 +133,8 @@ class SolverConfig:
     cached_segment_algebra: bool = False
     recursive_enumeration: bool = False
     dual_bounds: bool = False
+    dual_reduced_cost_fixing: bool = False
+    dual_ambiguity_branching: bool = False
     heuristic_incumbent: bool = False
     best_bound: bool = False
     heuristic_only: bool = False
@@ -154,6 +156,8 @@ class SolveStats:
     nodes_visited: int = 0
     bound_prunes: int = 0
     dual_solves: int = 0
+    reduced_cost_fixes: int = 0
+    ambiguity_branches: int = 0
     incumbent_updates: int = 0
 
 
@@ -248,6 +252,7 @@ class _DualResult:
     bound: float
     price: float
     segments: tuple[_Segment, ...]
+    option_values: tuple[tuple[float, ...], ...]
 
 
 def _marginal(
@@ -574,6 +579,7 @@ def _lagrangian_bound(
     closed_form: bool,
     newton: bool,
     cached: bool,
+    include_option_values: bool = False,
 ) -> _DualResult:
     if stats is not None:
         stats.dual_solves += 1
@@ -661,7 +667,26 @@ def _lagrangian_bound(
     price, (_, bound, segments, _) = min(
         candidates, key=lambda candidate: candidate[1][1]
     )
-    return _DualResult(bound, price, segments)
+    option_values = ()
+    if include_option_values:
+        values_by_option = []
+        for options in region_options:
+            values = []
+            for segment in options:
+                allocation = _allocation_at_price(
+                    segment,
+                    price,
+                    stats,
+                    adaptive=adaptive,
+                    closed_form=closed_form,
+                    cached=cached,
+                )
+                values.append(
+                    segment.income(allocation, cached=cached) - price * allocation
+                )
+            values_by_option.append(tuple(values))
+        option_values = tuple(values_by_option)
+    return _DualResult(bound, price, segments, option_values)
 
 
 def _heuristic_allocation(
@@ -744,6 +769,10 @@ def solve(
     config = config or SolverConfig()
     if config.dual_bounds and not config.recursive_enumeration:
         raise ValueError("dual_bounds requires recursive_enumeration")
+    if config.dual_reduced_cost_fixing and not config.dual_bounds:
+        raise ValueError("dual_reduced_cost_fixing requires dual_bounds")
+    if config.dual_ambiguity_branching and not config.dual_bounds:
+        raise ValueError("dual_ambiguity_branching requires dual_bounds")
     if config.heuristic_incumbent and not config.dual_bounds:
         raise ValueError("heuristic_incumbent requires dual_bounds")
     if config.best_bound and not config.dual_bounds:
@@ -836,13 +865,26 @@ def solve(
 
         def branch_index(
             options: tuple[tuple[_Segment, ...], ...],
+            relaxation: _DualResult,
         ) -> int | None:
-            return next(
-                (index for index, regions in enumerate(options) if len(regions) > 1),
-                None,
+            candidates = [
+                index for index, regions in enumerate(options) if len(regions) > 1
+            ]
+            if not candidates:
+                return None
+            if not config.dual_ambiguity_branching:
+                return candidates[0]
+            if stats is not None:
+                stats.ambiguity_branches += 1
+            return min(
+                candidates,
+                key=lambda index: max(relaxation.option_values[index])
+                - min(relaxation.option_values[index]),
             )
 
-        def upper_bound(options: tuple[tuple[_Segment, ...], ...]) -> float:
+        def upper_bound(
+            options: tuple[tuple[_Segment, ...], ...],
+        ) -> _DualResult:
             return _lagrangian_bound(
                 options,
                 budget,
@@ -851,11 +893,60 @@ def solve(
                 closed_form=config.closed_form_inversion,
                 newton=config.newton_price_search,
                 cached=config.cached_segment_algebra,
-            ).bound
+                include_option_values=(
+                    config.dual_reduced_cost_fixing
+                    or config.dual_ambiguity_branching
+                ),
+            )
 
         def cannot_improve(bound: float) -> bool:
             tolerance = max(1e-7, abs(best_income) * 1e-12)
             return best_allocations is not None and bound <= best_income + tolerance
+
+        def apply_reduced_cost_fixes(
+            options: tuple[tuple[_Segment, ...], ...],
+            relaxation: _DualResult,
+        ) -> tuple[tuple[tuple[_Segment, ...], ...], _DualResult]:
+            if not config.dual_reduced_cost_fixing:
+                return options, relaxation
+
+            reduced_options = []
+            reduced_values = []
+            for choices, values in zip(
+                options, relaxation.option_values, strict=True
+            ):
+                if len(choices) <= 1:
+                    reduced_options.append(choices)
+                    reduced_values.append(values)
+                    continue
+
+                best_index = max(range(len(values)), key=values.__getitem__)
+                best_value = values[best_index]
+                kept_indices = [best_index]
+                for index, value in enumerate(values):
+                    if index == best_index:
+                        continue
+                    # The same dual price remains a valid bound when this
+                    # market is forced onto the alternative segment.
+                    forced_bound = relaxation.bound - (best_value - value)
+                    if cannot_improve(forced_bound):
+                        if stats is not None:
+                            stats.reduced_cost_fixes += 1
+                    else:
+                        kept_indices.append(index)
+                kept_indices.sort()
+                reduced_options.append(tuple(choices[index] for index in kept_indices))
+                reduced_values.append(tuple(values[index] for index in kept_indices))
+
+            return (
+                tuple(reduced_options),
+                _DualResult(
+                    relaxation.bound,
+                    relaxation.price,
+                    relaxation.segments,
+                    tuple(reduced_values),
+                ),
+            )
 
         def visit_bounded(
             options: tuple[tuple[_Segment, ...], ...],
@@ -869,13 +960,14 @@ def solve(
                     stats.feasibility_prunes += 1
                 return
 
-            bound = upper_bound(options)
-            if cannot_improve(bound):
+            relaxation = upper_bound(options)
+            if cannot_improve(relaxation.bound):
                 if stats is not None:
                     stats.bound_prunes += 1
                 return
 
-            index = branch_index(options)
+            options, relaxation = apply_reduced_cost_fixes(options, relaxation)
+            index = branch_index(options, relaxation)
             if index is None:
                 consider(tuple(regions[0] for regions in options))
                 return
@@ -900,17 +992,26 @@ def solve(
                     tuple[tuple[_Segment, ...], ...],
                     float,
                     float,
+                    _DualResult,
                 ]
             ] = []
             serial = 0
             if root_lower <= budget <= root_upper:
+                root_relaxation = upper_bound(region_sets)
                 heapq.heappush(
                     queue,
-                    (-upper_bound(region_sets), serial, region_sets, root_lower, root_upper),
+                    (
+                        -root_relaxation.bound,
+                        serial,
+                        region_sets,
+                        root_lower,
+                        root_upper,
+                        root_relaxation,
+                    ),
                 )
 
             while queue:
-                negative_bound, _, options, _, _ = heapq.heappop(queue)
+                negative_bound, _, options, _, _, relaxation = heapq.heappop(queue)
                 node_bound = -negative_bound
                 if stats is not None:
                     stats.nodes_visited += 1
@@ -919,7 +1020,8 @@ def solve(
                         stats.bound_prunes += 1
                     continue
 
-                index = branch_index(options)
+                options, relaxation = apply_reduced_cost_fixes(options, relaxation)
+                index = branch_index(options, relaxation)
                 if index is None:
                     consider(tuple(regions[0] for regions in options))
                     continue
@@ -933,8 +1035,8 @@ def solve(
                         if stats is not None:
                             stats.feasibility_prunes += 1
                         continue
-                    child_bound = upper_bound(child_options)
-                    if cannot_improve(child_bound):
+                    child_relaxation = upper_bound(child_options)
+                    if cannot_improve(child_relaxation.bound):
                         if stats is not None:
                             stats.bound_prunes += 1
                         continue
@@ -942,11 +1044,12 @@ def solve(
                     heapq.heappush(
                         queue,
                         (
-                            -child_bound,
+                            -child_relaxation.bound,
                             serial,
                             child_options,
                             child_lower,
                             child_upper,
+                            child_relaxation,
                         ),
                     )
         else:

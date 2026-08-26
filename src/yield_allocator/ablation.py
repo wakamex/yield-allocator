@@ -23,6 +23,8 @@ EXACT_FEATURES = (
     "cached_segment_algebra",
     "recursive_enumeration",
     "dual_bounds",
+    "dual_reduced_cost_fixing",
+    "dual_ambiguity_branching",
     "heuristic_incumbent",
     "best_bound",
 )
@@ -33,6 +35,8 @@ DEPENDENCIES = {
     "cached_segment_algebra": frozenset(),
     "recursive_enumeration": frozenset(),
     "dual_bounds": frozenset({"recursive_enumeration"}),
+    "dual_reduced_cost_fixing": frozenset({"dual_bounds"}),
+    "dual_ambiguity_branching": frozenset({"dual_bounds"}),
     "heuristic_incumbent": frozenset({"dual_bounds"}),
     "best_bound": frozenset({"dual_bounds"}),
 }
@@ -77,6 +81,8 @@ def config_for(features: set[str], *, heuristic_only: bool = False) -> SolverCon
         cached_segment_algebra="cached_segment_algebra" in features,
         recursive_enumeration="recursive_enumeration" in features,
         dual_bounds="dual_bounds" in features,
+        dual_reduced_cost_fixing="dual_reduced_cost_fixing" in features,
+        dual_ambiguity_branching="dual_ambiguity_branching" in features,
         heuristic_incumbent="heuristic_incumbent" in features,
         best_bound="best_bound" in features,
         heuristic_only=heuristic_only,
@@ -243,15 +249,18 @@ def valid_feature_sets() -> tuple[frozenset[str], ...]:
 
 
 def valid_feature_orders() -> tuple[tuple[str, ...], ...]:
-    orders = []
-    for order in itertools.permutations(EXACT_FEATURES):
-        positions = {feature: index for index, feature in enumerate(order)}
-        if all(
-            positions[dependency] < positions[feature]
-            for feature, dependencies in DEPENDENCIES.items()
-            for dependency in dependencies
-        ):
-            orders.append(order)
+    orders: list[tuple[str, ...]] = []
+
+    def extend(prefix: tuple[str, ...], remaining: frozenset[str]) -> None:
+        if not remaining:
+            orders.append(prefix)
+            return
+        enabled = frozenset(prefix)
+        for feature in sorted(remaining):
+            if DEPENDENCIES[feature] <= enabled:
+                extend((*prefix, feature), remaining - {feature})
+
+    extend((), frozenset(EXACT_FEATURES))
     return tuple(orders)
 
 
