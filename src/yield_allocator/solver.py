@@ -172,6 +172,14 @@ PRESETS = {
         heuristic_incumbent=True,
         best_bound=True,
     ),
+    "h1": SolverConfig(
+        adaptive_bisection=True,
+        recursive_enumeration=True,
+        dual_bounds=True,
+        heuristic_incumbent=True,
+        best_bound=True,
+        heuristic_only=True,
+    ),
 }
 
 
@@ -460,14 +468,14 @@ def solve(
     stats: SolveStats | None = None,
 ) -> Solution:
     config = config or SolverConfig()
-    if config.heuristic_only:
-        raise ValueError("this solver configuration is not implemented yet")
     if config.dual_bounds and not config.recursive_enumeration:
         raise ValueError("dual_bounds requires recursive_enumeration")
     if config.heuristic_incumbent and not config.dual_bounds:
         raise ValueError("heuristic_incumbent requires dual_bounds")
     if config.best_bound and not config.dual_bounds:
         raise ValueError("best_bound requires dual_bounds")
+    if config.heuristic_only and not config.heuristic_incumbent:
+        raise ValueError("heuristic_only requires heuristic_incumbent")
     markets = tuple(markets)
     if not markets:
         raise ValueError("at least one market is required")
@@ -535,6 +543,8 @@ def solve(
             )
             if stats is not None:
                 stats.incumbent_updates += 1
+            if config.heuristic_only:
+                return Solution(budget, markets, best_allocations)
 
         def bounds(
             options: tuple[tuple[_Segment, ...], ...],

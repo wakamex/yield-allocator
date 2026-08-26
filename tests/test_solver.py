@@ -197,6 +197,39 @@ class SolverTests(unittest.TestCase):
         self.assertAlmostEqual(best_bound.annual_income, depth_first.annual_income, places=6)
         self.assertGreater(stats.nodes_visited, 0)
 
+    def test_heuristic_only_returns_feasible_bounded_result(self) -> None:
+        markets = generate_markets(8, 10_000_000, 1357, "all-crossing")
+        exact = solve(
+            markets,
+            10_000_000,
+            config=SolverConfig(
+                adaptive_bisection=True,
+                recursive_enumeration=True,
+                dual_bounds=True,
+                heuristic_incumbent=True,
+                best_bound=True,
+            ),
+        )
+        stats = SolveStats()
+
+        heuristic = solve(
+            markets,
+            10_000_000,
+            config=SolverConfig(
+                adaptive_bisection=True,
+                recursive_enumeration=True,
+                dual_bounds=True,
+                heuristic_incumbent=True,
+                best_bound=True,
+                heuristic_only=True,
+            ),
+            stats=stats,
+        )
+
+        self.assertAlmostEqual(sum(heuristic.allocations), 10_000_000)
+        self.assertLessEqual(heuristic.annual_income, exact.annual_income + 1e-6)
+        self.assertEqual(stats.nodes_visited, 0)
+
 
 class EntrypointTests(unittest.TestCase):
     def assert_entrypoint(self, command: list[str]) -> None:
