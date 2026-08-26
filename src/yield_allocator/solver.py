@@ -152,6 +152,7 @@ class SolveStats:
 PRESETS = {
     "a0": SolverConfig(),
     "a1": SolverConfig(adaptive_bisection=True),
+    "a2": SolverConfig(adaptive_bisection=True, recursive_enumeration=True),
 }
 
 
@@ -306,7 +307,14 @@ def solve(
     stats: SolveStats | None = None,
 ) -> Solution:
     config = config or SolverConfig()
-    if config not in PRESETS.values():
+    if any(
+        (
+            config.dual_bounds,
+            config.heuristic_incumbent,
+            config.best_bound,
+            config.heuristic_only,
+        )
+    ):
         raise ValueError("this solver configuration is not implemented yet")
     markets = tuple(markets)
     if not markets:
@@ -331,17 +339,18 @@ def solve(
             len(regions) for regions in region_sets
         )
 
-    for segments in product(*region_sets):
+    def consider(segments: tuple[_Segment, ...]) -> None:
+        nonlocal best_allocations, best_income
         if stats is not None:
             stats.combinations_visited += 1
         if sum(segment.lower for segment in segments) > budget:
             if stats is not None:
                 stats.feasibility_prunes += 1
-            continue
+            return
         if sum(segment.upper for segment in segments) < budget:
             if stats is not None:
                 stats.feasibility_prunes += 1
-            continue
+            return
         allocations = _solve_segments(
             segments,
             budget,
@@ -357,6 +366,49 @@ def solve(
             best_allocations = allocations
             if stats is not None:
                 stats.incumbent_updates += 1
+
+    if config.recursive_enumeration:
+        suffix_lower = [0.0] * (len(markets) + 1)
+        suffix_upper = [0.0] * (len(markets) + 1)
+        for index in range(len(markets) - 1, -1, -1):
+            suffix_lower[index] = suffix_lower[index + 1] + min(
+                segment.lower for segment in region_sets[index]
+            )
+            suffix_upper[index] = suffix_upper[index + 1] + max(
+                segment.upper for segment in region_sets[index]
+            )
+
+        def visit(
+            index: int,
+            selected: tuple[_Segment, ...],
+            lower: float,
+            upper: float,
+        ) -> None:
+            if stats is not None:
+                stats.nodes_visited += 1
+            if lower + suffix_lower[index] > budget:
+                if stats is not None:
+                    stats.feasibility_prunes += 1
+                return
+            if upper + suffix_upper[index] < budget:
+                if stats is not None:
+                    stats.feasibility_prunes += 1
+                return
+            if index == len(markets):
+                consider(selected)
+                return
+            for segment in region_sets[index]:
+                visit(
+                    index + 1,
+                    (*selected, segment),
+                    lower + segment.lower,
+                    upper + segment.upper,
+                )
+
+        visit(0, (), 0.0, 0.0)
+    else:
+        for segments in product(*region_sets):
+            consider(segments)
 
     if best_allocations is None:
         raise OptimizationError("no feasible allocation found")

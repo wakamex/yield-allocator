@@ -98,6 +98,23 @@ class SolverTests(unittest.TestCase):
             baseline_stats.marginal_evaluations,
         )
 
+    def test_recursive_enumeration_prunes_infeasible_subtrees(self) -> None:
+        markets = generate_markets(6, 10_000_000, 1234, "all-crossing")
+        baseline = solve(markets, 10_000_000)
+        stats = SolveStats()
+
+        recursive = solve(
+            markets,
+            10_000_000,
+            config=SolverConfig(recursive_enumeration=True),
+            stats=stats,
+        )
+
+        self.assertAlmostEqual(recursive.annual_income, baseline.annual_income, places=6)
+        self.assertEqual(stats.possible_region_combinations, 64)
+        self.assertLess(stats.combinations_visited, 64)
+        self.assertGreater(stats.feasibility_prunes, 0)
+
 
 class EntrypointTests(unittest.TestCase):
     def assert_entrypoint(self, command: list[str]) -> None:
