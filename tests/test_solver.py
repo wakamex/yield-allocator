@@ -115,6 +115,33 @@ class SolverTests(unittest.TestCase):
         self.assertLess(stats.combinations_visited, 64)
         self.assertGreater(stats.feasibility_prunes, 0)
 
+    def test_dual_bounds_match_baseline_and_prune(self) -> None:
+        markets = generate_markets(8, 10_000_000, 4321, "all-crossing")
+        baseline = solve(
+            markets,
+            10_000_000,
+            config=SolverConfig(
+                adaptive_bisection=True,
+                recursive_enumeration=True,
+            ),
+        )
+        stats = SolveStats()
+
+        bounded = solve(
+            markets,
+            10_000_000,
+            config=SolverConfig(
+                adaptive_bisection=True,
+                recursive_enumeration=True,
+                dual_bounds=True,
+            ),
+            stats=stats,
+        )
+
+        self.assertAlmostEqual(bounded.annual_income, baseline.annual_income, places=6)
+        self.assertGreater(stats.dual_solves, 0)
+        self.assertGreater(stats.bound_prunes, 0)
+
 
 class EntrypointTests(unittest.TestCase):
     def assert_entrypoint(self, command: list[str]) -> None:
