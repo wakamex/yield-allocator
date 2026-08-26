@@ -129,6 +129,7 @@ class Solution:
 class SolverConfig:
     adaptive_bisection: bool = False
     closed_form_inversion: bool = False
+    newton_price_search: bool = False
     recursive_enumeration: bool = False
     dual_bounds: bool = False
     heuristic_incumbent: bool = False
@@ -147,6 +148,8 @@ class SolveStats:
     marginal_evaluations: int = 0
     closed_form_evaluations: int = 0
     closed_form_fallbacks: int = 0
+    newton_steps: int = 0
+    newton_fallbacks: int = 0
     nodes_visited: int = 0
     bound_prunes: int = 0
     dual_solves: int = 0
@@ -361,6 +364,35 @@ def _closed_form_allocation(segment: _Segment, price: float) -> float | None:
     return allocation
 
 
+def _allocation_price_slope(segment: _Segment, allocation: float) -> float:
+    if allocation <= segment.lower or allocation >= segment.upper:
+        return 0.0
+    marginal_slope = segment.market.marginal_income_slope(
+        allocation, segment.branch
+    )
+    return 1 / marginal_slope if marginal_slope < 0 else 0.0
+
+
+def _next_price(
+    low: float,
+    high: float,
+    price: float,
+    residual: float,
+    slope: float,
+    stats: SolveStats | None,
+) -> float:
+    if slope < 0 and math.isfinite(slope):
+        candidate = price - residual / slope
+        margin = (high - low) * 0.01
+        if low + margin < candidate < high - margin:
+            if stats is not None:
+                stats.newton_steps += 1
+            return candidate
+    if stats is not None:
+        stats.newton_fallbacks += 1
+    return (low + high) / 2
+
+
 def _solve_segments(
     segments: tuple[_Segment, ...],
     budget: float,
@@ -368,6 +400,7 @@ def _solve_segments(
     *,
     adaptive: bool = False,
     closed_form: bool = False,
+    newton: bool = False,
 ) -> tuple[float, ...]:
     if sum(segment.lower for segment in segments) > budget:
         raise OptimizationError("infeasible segment lower bounds")
@@ -382,15 +415,15 @@ def _solve_segments(
     low_price = min(_marginal(segment, segment.upper, stats) for segment in segments)
     high_price = max(_marginal(segment, segment.lower, stats) for segment in segments)
 
-    iterations = 64 if adaptive else 100
+    iterations = 64 if adaptive or newton else 100
     allocation_tolerance = max(1e-7, budget * 1e-12)
+    price = (low_price + high_price) / 2
     for _ in range(iterations):
         if stats is not None:
             stats.outer_iterations += 1
-        price = (low_price + high_price) / 2
-        if adaptive and price in (low_price, high_price):
+        if (adaptive or newton) and price in (low_price, high_price):
             break
-        total = sum(
+        allocations_at_price = tuple(
             _allocation_at_price(
                 segment,
                 price,
@@ -400,13 +433,32 @@ def _solve_segments(
             )
             for segment in segments
         )
-        if adaptive and abs(total - budget) <= allocation_tolerance:
+        total = sum(allocations_at_price)
+        residual = total - budget
+        if (adaptive or newton) and abs(residual) <= allocation_tolerance:
             low_price = high_price = price
             break
-        if total > budget:
+        if residual > 0:
             low_price = price
         else:
             high_price = price
+        if newton:
+            slope = sum(
+                _allocation_price_slope(segment, allocation)
+                for segment, allocation in zip(
+                    segments, allocations_at_price, strict=True
+                )
+            )
+            price = _next_price(
+                low_price,
+                high_price,
+                price,
+                residual,
+                slope,
+                stats,
+            )
+        else:
+            price = (low_price + high_price) / 2
 
     allocations = [
         _allocation_at_price(
@@ -443,6 +495,7 @@ def _lagrangian_bound(
     *,
     adaptive: bool,
     closed_form: bool,
+    newton: bool,
 ) -> _DualResult:
     if stats is not None:
         stats.dual_solves += 1
@@ -461,8 +514,11 @@ def _lagrangian_bound(
         for segment in options
     )
 
-    def evaluate(price: float) -> tuple[float, float, tuple[_Segment, ...]]:
+    def evaluate(
+        price: float,
+    ) -> tuple[float, float, tuple[_Segment, ...], float]:
         total_allocation = 0.0
+        total_slope = 0.0
         dual_value = price * budget
         selected = []
         for options in region_options:
@@ -483,29 +539,45 @@ def _lagrangian_bound(
                     best_allocation = allocation
                     best_segment = segment
             total_allocation += best_allocation
+            total_slope += _allocation_price_slope(best_segment, best_allocation)
             dual_value += best_value
             selected.append(best_segment)
-        return total_allocation, dual_value, tuple(selected)
+        return total_allocation, dual_value, tuple(selected), total_slope
 
-    iterations = 64 if adaptive else 100
+    iterations = 64 if adaptive or newton else 100
+    price = (low_price + high_price) / 2
     for _ in range(iterations):
         if stats is not None:
             stats.outer_iterations += 1
-        price = (low_price + high_price) / 2
         if price in (low_price, high_price):
             break
-        total, _, _ = evaluate(price)
-        if total > budget:
+        total, _, _, slope = evaluate(price)
+        residual = total - budget
+        if residual > 0:
             low_price = price
         else:
             high_price = price
+        price = (
+            _next_price(
+                low_price,
+                high_price,
+                price,
+                residual,
+                slope,
+                stats,
+            )
+            if newton
+            else (low_price + high_price) / 2
+        )
 
     candidates = (
         (low_price, evaluate(low_price)),
         ((low_price + high_price) / 2, evaluate((low_price + high_price) / 2)),
         (high_price, evaluate(high_price)),
     )
-    price, (_, bound, segments) = min(candidates, key=lambda candidate: candidate[1][1])
+    price, (_, bound, segments, _) = min(
+        candidates, key=lambda candidate: candidate[1][1]
+    )
     return _DualResult(bound, price, segments)
 
 
@@ -516,6 +588,7 @@ def _heuristic_allocation(
     *,
     adaptive: bool,
     closed_form: bool,
+    newton: bool,
 ) -> tuple[float, ...]:
     relaxation = _lagrangian_bound(
         region_options,
@@ -523,6 +596,7 @@ def _heuristic_allocation(
         stats,
         adaptive=adaptive,
         closed_form=closed_form,
+        newton=newton,
     )
     selected = list(relaxation.segments)
 
@@ -566,6 +640,7 @@ def _heuristic_allocation(
         stats,
         adaptive=adaptive,
         closed_form=closed_form,
+        newton=newton,
     )
 
 
@@ -626,6 +701,7 @@ def solve(
             stats,
             adaptive=config.adaptive_bisection,
             closed_form=config.closed_form_inversion,
+            newton=config.newton_price_search,
         )
         income = sum(
             market.income(allocation)
@@ -645,6 +721,7 @@ def solve(
                 stats,
                 adaptive=config.adaptive_bisection,
                 closed_form=config.closed_form_inversion,
+                newton=config.newton_price_search,
             )
             best_income = sum(
                 market.income(allocation)
@@ -680,6 +757,7 @@ def solve(
                 stats,
                 adaptive=config.adaptive_bisection,
                 closed_form=config.closed_form_inversion,
+                newton=config.newton_price_search,
             ).bound
 
         def cannot_improve(bound: float) -> bool:

@@ -95,6 +95,7 @@ def parser() -> argparse.ArgumentParser:
     for feature in (
         "adaptive_bisection",
         "closed_form_inversion",
+        "newton_price_search",
         "recursive_enumeration",
         "dual_bounds",
         "heuristic_incumbent",
@@ -117,6 +118,7 @@ def main(argv: list[str] | None = None) -> int:
         for feature in (
             "adaptive_bisection",
             "closed_form_inversion",
+            "newton_price_search",
             "recursive_enumeration",
             "dual_bounds",
             "heuristic_incumbent",

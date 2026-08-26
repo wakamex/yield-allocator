@@ -123,6 +123,27 @@ class SolverTests(unittest.TestCase):
         self.assertEqual(stats.closed_form_fallbacks, 0)
         self.assertEqual(stats.inner_iterations, 0)
 
+    def test_newton_price_search_matches_bisection(self) -> None:
+        markets = generate_markets(8, 10_000_000, 9753, "all-crossing")
+        baseline_stats = SolveStats()
+        baseline = solve(markets, 10_000_000, stats=baseline_stats)
+        stats = SolveStats()
+
+        newton = solve(
+            markets,
+            10_000_000,
+            config=SolverConfig(newton_price_search=True),
+            stats=stats,
+        )
+
+        self.assertAlmostEqual(newton.annual_income, baseline.annual_income, places=6)
+        for actual, expected in zip(
+            newton.allocations, baseline.allocations, strict=True
+        ):
+            self.assertAlmostEqual(actual, expected, places=3)
+        self.assertGreater(stats.newton_steps, 0)
+        self.assertLess(stats.outer_iterations, baseline_stats.outer_iterations)
+
     def test_recursive_enumeration_prunes_infeasible_subtrees(self) -> None:
         markets = generate_markets(6, 10_000_000, 1234, "all-crossing")
         baseline = solve(markets, 10_000_000)
