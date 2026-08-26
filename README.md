@@ -78,14 +78,17 @@ without defining another preset.
 cubic inverse. `--newton-price-search` applies safeguarded Newton updates to the
 common portfolio price and falls back to a bracket midpoint when needed.
 `--cached-segment-algebra` precomputes fixed coefficients and endpoint
-marginals used in the hot loops. The three features are independent.
+marginals used in the hot loops. `--dual-reduced-cost-fixing` removes a branch
+when its parent dual bound proves that it cannot beat the incumbent.
+`--dual-ambiguity-branching` branches first on the market whose segment values
+are closest at the dual price.
 
 The `recommended` preset is the fastest exact configuration selected by the
-fixed 20-market step-forward [ablation](benchmarks/ablation.md). It enables
-adaptive stopping, closed-form inversion, cached segment algebra, recursive
-enumeration, dual bounds, heuristic initialization, and best-bound traversal.
-Newton price search remains available as an override but is disabled in this
-preset.
+fixed 20-market [ablation](benchmarks/ablation.md) and hot-path follow-up. It
+enables adaptive stopping, closed-form inversion, cached segment algebra,
+recursive enumeration, dual bounds, reduced-cost fixing, heuristic
+initialization, and best-bound traversal. Newton price search and ambiguity
+branching remain available as overrides but are disabled in this preset.
 
 ```sh
 uv run --frozen yield-allocate examples/two_markets.toml \
@@ -110,4 +113,6 @@ on stdout remains machine-readable.
 
 The reported geo-mean factor is the geometric mean of a feature's X-times
 speedup across valid addition orders. The feature factors multiply to the total
-speedup.
+speedup. A current ten-feature contribution run covers 288 configurations and
+120,960 valid orders. The benchmark report records the earlier eight-feature
+run.

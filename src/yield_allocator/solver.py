@@ -197,6 +197,7 @@ PRESETS = {
         cached_segment_algebra=True,
         recursive_enumeration=True,
         dual_bounds=True,
+        dual_reduced_cost_fixing=True,
         heuristic_incumbent=True,
         best_bound=True,
     ),

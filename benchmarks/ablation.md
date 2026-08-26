@@ -50,9 +50,9 @@ is enabled.
 | 8 | recommended | Newton price search | yes | 0.025727 | 1.00x | 7 | 1 | 904 | 0 | 37,461 | yes, forced completion |
 | 9 | all exact features | heuristic only | observed yes | 0.002440 | 10.54x | 0 | 1 | 97 | 0 | 3,525 | no |
 
-## Recommended exact configuration runs in 0.025668 seconds
+## Eight-feature exact configuration runs in 0.025668 seconds
 
-The fastest step-forward configuration enables:
+The original step-forward configuration enables:
 
 - adaptive bisection
 - cached segment algebra
@@ -83,12 +83,47 @@ The heuristic-only run happened to match the exact objective on this input and
 completed in 0.002440 seconds. It does not provide an exactness certificate, so
 it is not promoted as an exact solver.
 
-## Geo-mean feature factors multiply to a 797.18x full-feature speedup
+## Reduced-cost fixing lowers the hot path to 0.006802 seconds
 
-The dependency-aware Shapley calculation benchmarks all 96 valid exact feature
-combinations and averages each feature's X-times speedup across the 3,360 valid
-addition orders. This is a geometric mean. The attributed factors multiply to
-the total measured speedup.
+A targeted follow-up tested the two dual-guided branch features on the
+eight-feature configuration. It used 51 interleaved timed repetitions of the
+same fixed 20-market solve. Garbage collection and input loading were excluded.
+
+| Reduced-cost fixing | Ambiguity branching | Exact | Median s | Speedup | Nodes | Dual solves | Marginal evaluations | Branches fixed |
+| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| off | off | yes | 0.027510 | 1.00x | 7 | 16 | 37,569 | 0 |
+| on | off | yes | 0.006802 | 4.04x | 1 | 4 | 8,791 | 19 |
+| off | on | yes | 0.007737 | 3.56x | 1 | 4 | 11,043 | 0 |
+| on | on | yes | 0.006800 | 4.05x | 1 | 4 | 8,791 | 19 |
+
+Reduced-cost fixing is selected for the recommended preset. Ambiguity branching
+has no measurable marginal effect after fixing: it produces identical search
+work and changes the median by 0.02 percent.
+
+The selected feature was also tested on the same 20 deterministic 100-market
+all-crossing seeds used for the scaling check, with three timed repetitions per
+case.
+
+| Configuration | Median s | p95 s | Max s | Maximum nodes |
+| --- | ---: | ---: | ---: | ---: |
+| Previous recommended | 0.017491 | 1.191071 | 1.205860 | 101 |
+| With ambiguity branching | 0.017479 | 1.063409 | 1.212035 | 101 |
+| With reduced-cost fixing | 0.017628 | 0.027900 | 0.028366 | 2 |
+
+Ambiguity branching leaves the median unchanged and improves p95 by 1.12x, but
+it does not reduce the maximum search size. Reduced-cost fixing also leaves the
+median essentially unchanged, improves p95 by 42.69x, and reduces the maximum
+search from 101 nodes to two. Every objective matched.
+
+The full ten-feature contribution benchmark was not rerun for this targeted
+follow-up.
+
+## Eight-feature geo-mean factors multiply to a 797.18x speedup
+
+The earlier dependency-aware Shapley calculation benchmarks all 96 valid exact
+feature combinations and averages each feature's X-times speedup across the
+3,360 valid addition orders. This is a geometric mean. The attributed factors
+multiply to the total measured speedup.
 
 | Feature | Geo-mean attributed speedup | Share of log speedup |
 | --- | ---: | ---: |
@@ -102,9 +137,9 @@ the total measured speedup.
 | Best-bound traversal | 1.3450x | 4.44% |
 
 The factors multiply to 797.1803x, the three-trial median speedup from A0 to
-the configuration with all eight exact features. The recommended configuration
-is 818.95x faster than A0 in the same contribution run because it excludes
-Newton price search.
+the configuration with all eight exact features. The eight-feature
+configuration excluding Newton price search is 818.95x faster than A0 in the
+same contribution run.
 
 Newton price search has a positive order-averaged factor because it helps when
 other price-search reductions are absent. The final configuration test still

@@ -163,6 +163,8 @@ class SolverTests(unittest.TestCase):
         self.assertGreater(stats.closed_form_evaluations, 0)
         self.assertEqual(stats.newton_steps, 0)
         self.assertTrue(PRESETS["recommended"].cached_segment_algebra)
+        self.assertTrue(PRESETS["recommended"].dual_reduced_cost_fixing)
+        self.assertFalse(PRESETS["recommended"].dual_ambiguity_branching)
 
     def test_cached_segment_algebra_matches_direct_evaluation(self) -> None:
         markets = generate_markets(8, 10_000_000, 6420, "all-crossing")
@@ -288,11 +290,16 @@ class SolverTests(unittest.TestCase):
     def test_dual_reduced_cost_fixing_preserves_exact_result(self) -> None:
         markets = generate_markets(8, 10_000_000, 1234, "all-crossing")
         exact = solve(markets, 10_000_000)
+        control_config = replace(
+            PRESETS["recommended"],
+            dual_reduced_cost_fixing=False,
+            dual_ambiguity_branching=False,
+        )
         control_stats = SolveStats()
         solve(
             markets,
             10_000_000,
-            config=PRESETS["recommended"],
+            config=control_config,
             stats=control_stats,
         )
         stats = SolveStats()
@@ -301,7 +308,7 @@ class SolverTests(unittest.TestCase):
             markets,
             10_000_000,
             config=replace(
-                PRESETS["recommended"],
+                control_config,
                 dual_reduced_cost_fixing=True,
             ),
             stats=stats,
@@ -314,11 +321,16 @@ class SolverTests(unittest.TestCase):
     def test_dual_ambiguity_branching_preserves_exact_result(self) -> None:
         markets = generate_markets(8, 10_000_000, 1234, "all-crossing")
         exact = solve(markets, 10_000_000)
+        control_config = replace(
+            PRESETS["recommended"],
+            dual_reduced_cost_fixing=False,
+            dual_ambiguity_branching=False,
+        )
         control_stats = SolveStats()
         solve(
             markets,
             10_000_000,
-            config=PRESETS["recommended"],
+            config=control_config,
             stats=control_stats,
         )
         stats = SolveStats()
@@ -327,7 +339,7 @@ class SolverTests(unittest.TestCase):
             markets,
             10_000_000,
             config=replace(
-                PRESETS["recommended"],
+                control_config,
                 dual_ambiguity_branching=True,
             ),
             stats=stats,
