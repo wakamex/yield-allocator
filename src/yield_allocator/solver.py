@@ -130,6 +130,7 @@ class SolverConfig:
     adaptive_bisection: bool = False
     closed_form_inversion: bool = False
     newton_price_search: bool = False
+    cached_segment_algebra: bool = False
     recursive_enumeration: bool = False
     dual_bounds: bool = False
     heuristic_incumbent: bool = False
@@ -205,9 +206,40 @@ class _Segment:
     upper: float
     inverse_linear: float
     inverse_constant: float
+    income_linear: float
+    income_quadratic: float
+    lower_ratio: float
+    upper_ratio: float
+    lower_marginal: float
+    upper_marginal: float
 
-    def marginal(self, allocation: float) -> float:
-        return self.market.marginal_income(allocation, self.branch)
+    def marginal(self, allocation: float, *, cached: bool = False) -> float:
+        if not cached:
+            return self.market.marginal_income(allocation, self.branch)
+        ratio = 1 + allocation / self.market.supply
+        inverse_ratio = 1 / ratio
+        return (
+            self.inverse_linear + self.inverse_constant * inverse_ratio
+        ) * inverse_ratio**2
+
+    def marginal_slope(self, allocation: float, *, cached: bool = False) -> float:
+        if not cached:
+            return self.market.marginal_income_slope(allocation, self.branch)
+        ratio = 1 + allocation / self.market.supply
+        inverse_ratio = 1 / ratio
+        return (
+            -2 * self.inverse_linear
+            - 3 * self.inverse_constant * inverse_ratio
+        ) * inverse_ratio**3 / self.market.supply
+
+    def income(self, allocation: float, *, cached: bool = False) -> float:
+        if not cached:
+            return self.market.income(allocation)
+        ratio = 1 + allocation / self.market.supply
+        inverse_ratio = 1 / ratio
+        return allocation * (
+            self.income_linear + self.income_quadratic * inverse_ratio
+        ) * inverse_ratio
 
 
 @dataclass(frozen=True)
@@ -218,11 +250,20 @@ class _DualResult:
 
 
 def _marginal(
-    segment: _Segment, allocation: float, stats: SolveStats | None
+    segment: _Segment,
+    allocation: float,
+    stats: SolveStats | None,
+    *,
+    cached: bool = False,
 ) -> float:
     if stats is not None:
         stats.marginal_evaluations += 1
-    return segment.marginal(allocation)
+    if cached:
+        if allocation == segment.lower:
+            return segment.lower_marginal
+        if allocation == segment.upper:
+            return segment.upper_marginal
+    return segment.marginal(allocation, cached=cached)
 
 
 def _segments(market: Market, budget: float) -> tuple[_Segment, ...]:
@@ -235,14 +276,27 @@ def _segments(market: Market, budget: float) -> tuple[_Segment, ...]:
         intercept, slope = market._curve(branch)
         utilization = market.borrow / market.supply
         retained = 1 - market.reserve_factor
+        inverse_linear = retained * (
+            intercept * utilization - slope * utilization**2
+        )
+        inverse_constant = 2 * retained * slope * utilization**2
+        lower_ratio = 1 + lower / market.supply
+        upper_ratio = 1 + upper / market.supply
         return _Segment(
             market=market,
             branch=branch,
             lower=lower,
             upper=upper,
-            inverse_linear=retained
-            * (intercept * utilization - slope * utilization**2),
-            inverse_constant=2 * retained * slope * utilization**2,
+            inverse_linear=inverse_linear,
+            inverse_constant=inverse_constant,
+            income_linear=retained * intercept * utilization,
+            income_quadratic=retained * slope * utilization**2,
+            lower_ratio=lower_ratio,
+            upper_ratio=upper_ratio,
+            lower_marginal=inverse_linear / lower_ratio**2
+            + inverse_constant / lower_ratio**3,
+            upper_marginal=inverse_linear / upper_ratio**2
+            + inverse_constant / upper_ratio**3,
         )
 
     if kink > 0:
@@ -256,10 +310,10 @@ def _segments(market: Market, budget: float) -> tuple[_Segment, ...]:
     return tuple(segment for segment in segments if segment.lower <= segment.upper)
 
 
-def _validate_concavity(segment: _Segment) -> None:
+def _validate_concavity(segment: _Segment, *, cached: bool = False) -> None:
     slopes = (
-        segment.market.marginal_income_slope(segment.lower, segment.branch),
-        segment.market.marginal_income_slope(segment.upper, segment.branch),
+        segment.marginal_slope(segment.lower, cached=cached),
+        segment.marginal_slope(segment.upper, cached=cached),
     )
     if max(slopes) > 1e-18:
         raise OptimizationError(
@@ -275,16 +329,17 @@ def _allocation_at_price(
     *,
     adaptive: bool = False,
     closed_form: bool = False,
+    cached: bool = False,
 ) -> float:
-    if _marginal(segment, segment.lower, stats) <= price:
+    if _marginal(segment, segment.lower, stats, cached=cached) <= price:
         return segment.lower
-    if _marginal(segment, segment.upper, stats) >= price:
+    if _marginal(segment, segment.upper, stats, cached=cached) >= price:
         return segment.upper
 
     if closed_form:
         if stats is not None:
             stats.closed_form_evaluations += 1
-        allocation = _closed_form_allocation(segment, price)
+        allocation = _closed_form_allocation(segment, price, cached=cached)
         if allocation is not None:
             return allocation
         if stats is not None:
@@ -299,14 +354,16 @@ def _allocation_at_price(
         middle = (lower + upper) / 2
         if adaptive and (upper - lower <= tolerance or middle in (lower, upper)):
             break
-        if _marginal(segment, middle, stats) > price:
+        if _marginal(segment, middle, stats, cached=cached) > price:
             lower = middle
         else:
             upper = middle
     return (lower + upper) / 2
 
 
-def _closed_form_allocation(segment: _Segment, price: float) -> float | None:
+def _closed_form_allocation(
+    segment: _Segment, price: float, *, cached: bool = False
+) -> float | None:
     linear = segment.inverse_linear
     constant = segment.inverse_constant
 
@@ -343,8 +400,16 @@ def _closed_form_allocation(segment: _Segment, price: float) -> float | None:
                 for index in range(3)
             )
 
-    lower = 1 + segment.lower / segment.market.supply
-    upper = 1 + segment.upper / segment.market.supply
+    lower = (
+        segment.lower_ratio
+        if cached
+        else 1 + segment.lower / segment.market.supply
+    )
+    upper = (
+        segment.upper_ratio
+        if cached
+        else 1 + segment.upper / segment.market.supply
+    )
     tolerance = max(1e-14, upper * 1e-12)
     valid = [
         min(upper, max(lower, root))
@@ -360,18 +425,18 @@ def _closed_form_allocation(segment: _Segment, price: float) -> float | None:
     )
     allocation = segment.market.supply * (root - 1)
     allocation = min(segment.upper, max(segment.lower, allocation))
-    error = abs(segment.marginal(allocation) - price)
+    error = abs(segment.marginal(allocation, cached=cached) - price)
     if error > max(1e-12, abs(price) * 1e-9):
         return None
     return allocation
 
 
-def _allocation_price_slope(segment: _Segment, allocation: float) -> float:
+def _allocation_price_slope(
+    segment: _Segment, allocation: float, *, cached: bool = False
+) -> float:
     if allocation <= segment.lower or allocation >= segment.upper:
         return 0.0
-    marginal_slope = segment.market.marginal_income_slope(
-        allocation, segment.branch
-    )
+    marginal_slope = segment.marginal_slope(allocation, cached=cached)
     return 1 / marginal_slope if marginal_slope < 0 else 0.0
 
 
@@ -403,6 +468,7 @@ def _solve_segments(
     adaptive: bool = False,
     closed_form: bool = False,
     newton: bool = False,
+    cached: bool = False,
 ) -> tuple[float, ...]:
     if sum(segment.lower for segment in segments) > budget:
         raise OptimizationError("infeasible segment lower bounds")
@@ -410,12 +476,18 @@ def _solve_segments(
         raise OptimizationError("infeasible segment upper bounds")
 
     for segment in segments:
-        _validate_concavity(segment)
+        _validate_concavity(segment, cached=cached)
 
     if stats is not None:
         stats.fixed_region_solves += 1
-    low_price = min(_marginal(segment, segment.upper, stats) for segment in segments)
-    high_price = max(_marginal(segment, segment.lower, stats) for segment in segments)
+    low_price = min(
+        _marginal(segment, segment.upper, stats, cached=cached)
+        for segment in segments
+    )
+    high_price = max(
+        _marginal(segment, segment.lower, stats, cached=cached)
+        for segment in segments
+    )
 
     iterations = 64 if adaptive or newton else 100
     allocation_tolerance = max(1e-7, budget * 1e-12)
@@ -432,6 +504,7 @@ def _solve_segments(
                 stats,
                 adaptive=adaptive,
                 closed_form=closed_form,
+                cached=cached,
             )
             for segment in segments
         )
@@ -446,7 +519,7 @@ def _solve_segments(
             high_price = price
         if newton:
             slope = sum(
-                _allocation_price_slope(segment, allocation)
+                _allocation_price_slope(segment, allocation, cached=cached)
                 for segment, allocation in zip(
                     segments, allocations_at_price, strict=True
                 )
@@ -469,6 +542,7 @@ def _solve_segments(
             stats,
             adaptive=adaptive,
             closed_form=closed_form,
+            cached=cached,
         )
         for segment in segments
     ]
@@ -498,20 +572,21 @@ def _lagrangian_bound(
     adaptive: bool,
     closed_form: bool,
     newton: bool,
+    cached: bool,
 ) -> _DualResult:
     if stats is not None:
         stats.dual_solves += 1
     for options in region_options:
         for segment in options:
-            _validate_concavity(segment)
+            _validate_concavity(segment, cached=cached)
 
     low_price = min(
-        _marginal(segment, segment.upper, stats)
+        _marginal(segment, segment.upper, stats, cached=cached)
         for options in region_options
         for segment in options
     )
     high_price = max(
-        _marginal(segment, segment.lower, stats)
+        _marginal(segment, segment.lower, stats, cached=cached)
         for options in region_options
         for segment in options
     )
@@ -534,14 +609,19 @@ def _lagrangian_bound(
                     stats,
                     adaptive=adaptive,
                     closed_form=closed_form,
+                    cached=cached,
                 )
-                value = segment.market.income(allocation) - price * allocation
+                value = (
+                    segment.income(allocation, cached=cached) - price * allocation
+                )
                 if value > best_value:
                     best_value = value
                     best_allocation = allocation
                     best_segment = segment
             total_allocation += best_allocation
-            total_slope += _allocation_price_slope(best_segment, best_allocation)
+            total_slope += _allocation_price_slope(
+                best_segment, best_allocation, cached=cached
+            )
             dual_value += best_value
             selected.append(best_segment)
         return total_allocation, dual_value, tuple(selected), total_slope
@@ -591,6 +671,7 @@ def _heuristic_allocation(
     adaptive: bool,
     closed_form: bool,
     newton: bool,
+    cached: bool,
 ) -> tuple[float, ...]:
     relaxation = _lagrangian_bound(
         region_options,
@@ -599,6 +680,7 @@ def _heuristic_allocation(
         adaptive=adaptive,
         closed_form=closed_form,
         newton=newton,
+        cached=cached,
     )
     selected = list(relaxation.segments)
 
@@ -609,8 +691,12 @@ def _heuristic_allocation(
             stats,
             adaptive=adaptive,
             closed_form=closed_form,
+            cached=cached,
         )
-        return segment.market.income(allocation) - relaxation.price * allocation
+        return (
+            segment.income(allocation, cached=cached)
+            - relaxation.price * allocation
+        )
 
     while sum(segment.lower for segment in selected) > budget:
         replacements = []
@@ -643,6 +729,7 @@ def _heuristic_allocation(
         adaptive=adaptive,
         closed_form=closed_form,
         newton=newton,
+        cached=cached,
     )
 
 
@@ -704,6 +791,7 @@ def solve(
             adaptive=config.adaptive_bisection,
             closed_form=config.closed_form_inversion,
             newton=config.newton_price_search,
+            cached=config.cached_segment_algebra,
         )
         income = sum(
             market.income(allocation)
@@ -724,6 +812,7 @@ def solve(
                 adaptive=config.adaptive_bisection,
                 closed_form=config.closed_form_inversion,
                 newton=config.newton_price_search,
+                cached=config.cached_segment_algebra,
             )
             best_income = sum(
                 market.income(allocation)
@@ -760,6 +849,7 @@ def solve(
                 adaptive=config.adaptive_bisection,
                 closed_form=config.closed_form_inversion,
                 newton=config.newton_price_search,
+                cached=config.cached_segment_algebra,
             ).bound
 
         def cannot_improve(bound: float) -> bool:

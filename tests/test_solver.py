@@ -162,6 +162,28 @@ class SolverTests(unittest.TestCase):
         self.assertGreater(stats.closed_form_evaluations, 0)
         self.assertEqual(stats.newton_steps, 0)
 
+    def test_cached_segment_algebra_matches_direct_evaluation(self) -> None:
+        markets = generate_markets(8, 10_000_000, 6420, "all-crossing")
+        baseline_stats = SolveStats()
+        baseline = solve(markets, 10_000_000, stats=baseline_stats)
+        stats = SolveStats()
+
+        cached = solve(
+            markets,
+            10_000_000,
+            config=SolverConfig(cached_segment_algebra=True),
+            stats=stats,
+        )
+
+        self.assertAlmostEqual(cached.annual_income, baseline.annual_income, places=6)
+        for actual, expected in zip(
+            cached.allocations, baseline.allocations, strict=True
+        ):
+            self.assertAlmostEqual(actual, expected, places=3)
+        self.assertEqual(
+            stats.marginal_evaluations, baseline_stats.marginal_evaluations
+        )
+
     def test_recursive_enumeration_prunes_infeasible_subtrees(self) -> None:
         markets = generate_markets(6, 10_000_000, 1234, "all-crossing")
         baseline = solve(markets, 10_000_000)
@@ -337,6 +359,7 @@ class EntrypointTests(unittest.TestCase):
                 "--adaptive-bisection",
                 "--closed-form-inversion",
                 "--newton-price-search",
+                "--cached-segment-algebra",
                 "--recursive-enumeration",
                 "--json",
             ],
