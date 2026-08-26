@@ -4,13 +4,12 @@ This package allocates a fixed budget across utilization-based lending markets.
 It reads market state and rate curves from TOML, accounts for the rate impact of
 each deposit, and returns the highest-income allocation.
 
-## Scaling is linear in the common case and exponential in the worst case
+## Current observed scaling stays near-linear; previous tails are quadratic
 
-The current and previous exact configurations share a branch-and-bound worst
-case with up to `2^k` segment combinations for `k` ambiguous markets. The
-benchmarks did not observe that full tree. They observed a linear median for
-both configurations, a quadratic chain-like sample maximum for the previous
-configuration, and a near-linear sample maximum for the current configuration.
+The benchmarks observed near-linear scaling across the current distribution.
+The previous configuration had a linear median but a quadratic chain-like
+sample maximum. Neither configuration exposed an exponential tree in the
+measured cases.
 
 The 200-seed all-crossing benchmark from 400 through 750 markets produced:
 
@@ -24,8 +23,10 @@ The 200-seed all-crossing benchmark from 400 through 750 markets produced:
 The previous sample maximum visited about one node per market, and every node
 scanned all markets, producing approximately quadratic time. Reduced-cost
 fixing kept the current sample maximum to six nodes. This changes the observed
-tail but does not prove a polynomial worst case. An adversarial instance can
-still defeat the bound reductions and expose the exponential tree.
+tail. The exact search still has an unobserved theoretical worst case with up
+to `2^k` segment combinations for `k` ambiguous markets. Reduced-cost fixing
+has not been proven to remove that worst case, but the current benchmarks do
+not show it.
 
 At 1,000 through 10,000 markets, current p95 runtime is effectively linear with
 exponent 1.005 under fixed budget and 1.007 under proportional budget. See the
@@ -78,7 +79,7 @@ uv run --locked yield-benchmark --max-markets 10 --trials 5
 
 The default `mixed` profile generates markets below the kink, above an
 unreachable kink, and above a kink reachable within the budget. The
-`all-crossing` profile is an exponential-scaling stress test:
+`all-crossing` profile is a branching stress test:
 
 ```sh
 uv run --locked yield-benchmark \
