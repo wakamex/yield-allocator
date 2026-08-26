@@ -1,9 +1,8 @@
 # Yield allocator
 
-This package solves the static lending allocation defined in
-[`README.md`](README.md). It reads a TOML problem,
-enumerates feasible utilization-curve regions, solves each region by equalizing
-marginal income, and returns the highest-income allocation.
+This package allocates a fixed budget across utilization-based lending markets.
+It reads market state and rate curves from TOML, accounts for the rate impact of
+each deposit, and returns the highest-income allocation.
 
 Run the included case:
 
@@ -20,18 +19,18 @@ uv --no-config run --locked yield-allocate examples/two_markets.toml --json
 The input has one budget and one table per market:
 
 ```toml
-budget = 10_000_000
+budget = 7_500_000
 
 [[markets]]
 name = "Market Alpha"
 supply = 850_000_000
 borrow = 710_000_000
-kink = 0.92
-slope_1 = 0.04
-slope_2 = 0.10
-base_rate = 0.0
-reserve_factor = 0.0
-# max_allocation = 5_000_000
+kink = 0.87
+slope_1 = 0.035
+slope_2 = 0.18
+base_rate = 0.005
+reserve_factor = 0.10
+# max_allocation = 4_000_000
 ```
 
 `base_rate` and `reserve_factor` default to zero. `max_allocation` is optional.

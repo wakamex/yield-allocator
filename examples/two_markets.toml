@@ -1,0 +1,21 @@
+budget = 7_500_000
+
+[[markets]]
+name = "Market Alpha"
+supply = 850_000_000
+borrow = 710_000_000
+kink = 0.87
+slope_1 = 0.035
+slope_2 = 0.18
+base_rate = 0.005
+reserve_factor = 0.10
+
+[[markets]]
+name = "Market Beta"
+supply = 1_400_000_000
+borrow = 1_050_000_000
+kink = 0.90
+slope_1 = 0.05
+slope_2 = 0.25
+base_rate = 0.003
+reserve_factor = 0.15

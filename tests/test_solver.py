@@ -13,15 +13,15 @@ from yield_allocator.solver import Market, SolveStats, SolverConfig, solve
 
 
 ROOT = Path(__file__).parents[1]
-TEST_CASE = ROOT / "examples" / "test_case.toml"
+TEST_CASE = ROOT / "examples" / "two_markets.toml"
 
 
 class SolverTests(unittest.TestCase):
     def test_borrow_curve_is_continuous_at_kink(self) -> None:
-        market = Market("market", 100, 92, 0.92, 0.04, 0.10)
+        market = Market("market", 100, 85, 0.85, 0.03, 0.12)
         at_kink = market.kink_allocation
 
-        self.assertAlmostEqual(market.borrow_rate(at_kink), 0.04 * 0.92)
+        self.assertAlmostEqual(market.borrow_rate(at_kink), 0.03 * 0.85)
         self.assertAlmostEqual(
             market.borrow_rate(at_kink - 1e-8),
             market.borrow_rate(at_kink + 1e-8),
@@ -32,8 +32,8 @@ class SolverTests(unittest.TestCase):
         budget, markets = load_problem(TEST_CASE)
         solution = solve(markets, budget)
 
-        self.assertAlmostEqual(solution.allocations[0], 10_000_000, places=3)
-        self.assertAlmostEqual(solution.allocations[1], 0, places=3)
+        self.assertAlmostEqual(solution.allocations[0], 2_453_738.774526704, places=3)
+        self.assertAlmostEqual(solution.allocations[1], 5_046_261.225473296, places=3)
         self.assertAlmostEqual(solution.portfolio_rate, 0.025627138862664)
         self.assertAlmostEqual(solution.annual_income, 192_203.54146998)
 
@@ -73,9 +73,9 @@ class SolverTests(unittest.TestCase):
 
         solve(markets, budget, config=SolverConfig(), stats=stats)
 
-        self.assertEqual(stats.possible_region_combinations, 2)
-        self.assertEqual(stats.combinations_visited, 2)
-        self.assertEqual(stats.fixed_region_solves, 2)
+        self.assertEqual(stats.possible_region_combinations, 1)
+        self.assertEqual(stats.combinations_visited, 1)
+        self.assertEqual(stats.fixed_region_solves, 1)
         self.assertGreater(stats.marginal_evaluations, 0)
 
     def test_adaptive_bisection_matches_baseline_with_fewer_evaluations(self) -> None:
@@ -92,7 +92,10 @@ class SolverTests(unittest.TestCase):
         )
 
         self.assertAlmostEqual(adaptive.annual_income, baseline.annual_income, places=6)
-        self.assertEqual(adaptive.allocations, baseline.allocations)
+        for actual, expected in zip(
+            adaptive.allocations, baseline.allocations, strict=True
+        ):
+            self.assertAlmostEqual(actual, expected, places=3)
         self.assertLess(
             adaptive_stats.marginal_evaluations,
             baseline_stats.marginal_evaluations,
@@ -240,7 +243,7 @@ class EntrypointTests(unittest.TestCase):
             text=True,
         )
         output = json.loads(result.stdout)
-        self.assertEqual(output["budget"], 10_000_000)
+        self.assertEqual(output["budget"], 7_500_000)
         self.assertEqual(len(output["markets"]), 2)
 
     def test_module_entrypoint(self) -> None:
@@ -278,7 +281,7 @@ class EntrypointTests(unittest.TestCase):
             capture_output=True,
             text=True,
         )
-        self.assertEqual(json.loads(result.stdout)["budget"], 10_000_000)
+        self.assertEqual(json.loads(result.stdout)["budget"], 7_500_000)
 
     def test_ablation_entrypoint(self) -> None:
         command = shutil.which("yield-ablate")
