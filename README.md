@@ -7,13 +7,13 @@ each deposit, and returns the highest-income allocation.
 Run the included case:
 
 ```sh
-uv --no-config run --locked yield-allocate examples/two_markets.toml
+uv run --frozen yield-allocate examples/two_markets.toml
 ```
 
 Get machine-readable output:
 
 ```sh
-uv --no-config run --locked yield-allocate examples/two_markets.toml --json
+uv run --frozen yield-allocate examples/two_markets.toml --json
 ```
 
 The input has one budget and one table per market:
@@ -39,13 +39,13 @@ Rates use decimal APR values.
 Run the tests:
 
 ```sh
-uv --no-config run --locked python -m unittest discover -s tests -v
+uv run --frozen python -m unittest discover -s tests -v
 ```
 
 Run the deterministic stochastic benchmark through 10 markets:
 
 ```sh
-uv --no-config run --locked yield-benchmark --max-markets 10 --trials 5
+uv run --frozen yield-benchmark --max-markets 10 --trials 5
 ```
 
 The default `mixed` profile generates markets below the kink, above an
@@ -53,7 +53,7 @@ unreachable kink, and above a kink reachable within the budget. The
 `all-crossing` profile is an exponential-scaling stress test:
 
 ```sh
-uv --no-config run --locked yield-benchmark \
+uv run --frozen yield-benchmark \
   --profile all-crossing --max-markets 10 --trials 3
 ```
 
@@ -64,9 +64,9 @@ profile. Runtime still varies with host load.
 Select a solver preset or override individual features:
 
 ```sh
-uv --no-config run --locked yield-allocate examples/two_markets.toml --preset a5
+uv run --frozen yield-allocate examples/two_markets.toml --preset a5
 
-uv --no-config run --locked yield-allocate examples/two_markets.toml \
+uv run --frozen yield-allocate examples/two_markets.toml \
   --adaptive-bisection \
   --recursive-enumeration
 ```
@@ -78,21 +78,21 @@ The `recommended` preset is the fastest exact configuration selected by the
 fixed 20-market step-forward ablation:
 
 ```sh
-uv --no-config run --locked yield-allocate examples/two_markets.toml \
+uv run --frozen yield-allocate examples/two_markets.toml \
   --preset recommended
 ```
 
 Run the fixed 20-market step-forward ablation:
 
 ```sh
-uv --no-config run --locked yield-ablate --trials 3
+uv run --frozen yield-ablate --trials 3
 ```
 
 Attribute the total speedup across features using every dependency-valid feature
 order:
 
 ```sh
-uv --no-config run --locked yield-ablate --contributions --trials 3
+uv run --frozen yield-ablate --contributions --trials 3
 ```
 
 The reported geo-mean factor is the geometric mean of a feature's X-times
