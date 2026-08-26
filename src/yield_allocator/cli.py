@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 import argparse
+from dataclasses import replace
 import json
 import tomllib
 from pathlib import Path
 from typing import Any
 
-from .solver import Market, Solution, solve
+from .solver import PRESETS, Market, Solution, solve
 
 
 def load_problem(path: Path) -> tuple[float, list[Market]]:
@@ -88,6 +89,22 @@ def parser() -> argparse.ArgumentParser:
     argument_parser.add_argument(
         "--json", action="store_true", help="print machine-readable JSON"
     )
+    argument_parser.add_argument(
+        "--preset", choices=tuple(PRESETS), default="a0", help="solver preset"
+    )
+    for feature in (
+        "adaptive_bisection",
+        "recursive_enumeration",
+        "dual_bounds",
+        "heuristic_incumbent",
+        "best_bound",
+        "heuristic_only",
+    ):
+        argument_parser.add_argument(
+            f"--{feature.replace('_', '-')}",
+            action=argparse.BooleanOptionalAction,
+            default=None,
+        )
     return argument_parser
 
 
@@ -95,7 +112,19 @@ def main(argv: list[str] | None = None) -> int:
     arguments = parser().parse_args(argv)
     try:
         budget, markets = load_problem(arguments.input)
-        solution = solve(markets, budget)
+        config = PRESETS[arguments.preset]
+        for feature in (
+            "adaptive_bisection",
+            "recursive_enumeration",
+            "dual_bounds",
+            "heuristic_incumbent",
+            "best_bound",
+            "heuristic_only",
+        ):
+            value = getattr(arguments, feature)
+            if value is not None:
+                config = replace(config, **{feature: value})
+        solution = solve(markets, budget, config=config)
     except (OSError, ValueError) as error:
         parser().error(str(error))
 

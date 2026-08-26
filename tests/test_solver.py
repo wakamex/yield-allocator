@@ -263,6 +263,23 @@ class EntrypointTests(unittest.TestCase):
         output = json.loads(result.stdout)
         self.assertEqual(output["results"][0]["markets"], 2)
 
+    def test_solver_feature_override(self) -> None:
+        command = shutil.which("yield-allocate")
+        self.assertIsNotNone(command)
+        result = subprocess.run(
+            [
+                command,
+                str(TEST_CASE),
+                "--adaptive-bisection",
+                "--recursive-enumeration",
+                "--json",
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(json.loads(result.stdout)["budget"], 10_000_000)
+
 
 class BenchmarkTests(unittest.TestCase):
     def test_market_generation_is_repeatable(self) -> None:

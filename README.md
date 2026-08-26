@@ -61,3 +61,22 @@ uv --no-config run --locked yield-benchmark \
 The seed defaults to `20260826` and can be changed with `--seed`. Market inputs
 are identical for repeated runs with the same seed, market count, trial, and
 profile. Runtime still varies with host load.
+
+Select a solver preset or override individual features:
+
+```sh
+uv --no-config run --locked yield-allocate examples/two_markets.toml --preset a5
+
+uv --no-config run --locked yield-allocate examples/two_markets.toml \
+  --adaptive-bisection \
+  --recursive-enumeration
+```
+
+Every feature flag also has a `--no-...` form, so a preset can be modified
+without defining another preset.
+
+Run the fixed 20-market step-forward ablation:
+
+```sh
+uv --no-config run --locked yield-ablate --trials 3
+```
