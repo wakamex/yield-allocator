@@ -158,6 +158,12 @@ PRESETS = {
         recursive_enumeration=True,
         dual_bounds=True,
     ),
+    "a4": SolverConfig(
+        adaptive_bisection=True,
+        recursive_enumeration=True,
+        dual_bounds=True,
+        heuristic_incumbent=True,
+    ),
 }
 
 
@@ -170,6 +176,13 @@ class _Segment:
 
     def marginal(self, allocation: float) -> float:
         return self.market.marginal_income(allocation, self.branch)
+
+
+@dataclass(frozen=True)
+class _DualResult:
+    bound: float
+    price: float
+    segments: tuple[_Segment, ...]
 
 
 def _marginal(
@@ -310,7 +323,7 @@ def _lagrangian_bound(
     stats: SolveStats | None,
     *,
     adaptive: bool,
-) -> float:
+) -> _DualResult:
     if stats is not None:
         stats.dual_solves += 1
     for options in region_options:
@@ -328,12 +341,14 @@ def _lagrangian_bound(
         for segment in options
     )
 
-    def evaluate(price: float) -> tuple[float, float]:
+    def evaluate(price: float) -> tuple[float, float, tuple[_Segment, ...]]:
         total_allocation = 0.0
         dual_value = price * budget
+        selected = []
         for options in region_options:
             best_value = float("-inf")
             best_allocation = 0.0
+            best_segment = options[0]
             for segment in options:
                 allocation = _allocation_at_price(
                     segment,
@@ -345,9 +360,11 @@ def _lagrangian_bound(
                 if value > best_value:
                     best_value = value
                     best_allocation = allocation
+                    best_segment = segment
             total_allocation += best_allocation
             dual_value += best_value
-        return total_allocation, dual_value
+            selected.append(best_segment)
+        return total_allocation, dual_value, tuple(selected)
 
     iterations = 64 if adaptive else 100
     for _ in range(iterations):
@@ -356,16 +373,74 @@ def _lagrangian_bound(
         price = (low_price + high_price) / 2
         if price in (low_price, high_price):
             break
-        total, _ = evaluate(price)
+        total, _, _ = evaluate(price)
         if total > budget:
             low_price = price
         else:
             high_price = price
 
-    return min(
-        evaluate(low_price)[1],
-        evaluate((low_price + high_price) / 2)[1],
-        evaluate(high_price)[1],
+    candidates = (
+        (low_price, evaluate(low_price)),
+        ((low_price + high_price) / 2, evaluate((low_price + high_price) / 2)),
+        (high_price, evaluate(high_price)),
+    )
+    price, (_, bound, segments) = min(candidates, key=lambda candidate: candidate[1][1])
+    return _DualResult(bound, price, segments)
+
+
+def _heuristic_allocation(
+    region_options: tuple[tuple[_Segment, ...], ...],
+    budget: float,
+    stats: SolveStats | None,
+    *,
+    adaptive: bool,
+) -> tuple[float, ...]:
+    relaxation = _lagrangian_bound(
+        region_options,
+        budget,
+        stats,
+        adaptive=adaptive,
+    )
+    selected = list(relaxation.segments)
+
+    def lagrangian_value(segment: _Segment) -> float:
+        allocation = _allocation_at_price(
+            segment,
+            relaxation.price,
+            stats,
+            adaptive=adaptive,
+        )
+        return segment.market.income(allocation) - relaxation.price * allocation
+
+    while sum(segment.lower for segment in selected) > budget:
+        replacements = []
+        for index, options in enumerate(region_options):
+            for alternative in options:
+                if alternative.lower < selected[index].lower:
+                    loss = lagrangian_value(selected[index]) - lagrangian_value(alternative)
+                    replacements.append((loss, index, alternative))
+        if not replacements:
+            raise OptimizationError("could not repair heuristic lower bounds")
+        _, index, replacement = min(replacements, key=lambda item: item[0])
+        selected[index] = replacement
+
+    while sum(segment.upper for segment in selected) < budget:
+        replacements = []
+        for index, options in enumerate(region_options):
+            for alternative in options:
+                if alternative.upper > selected[index].upper:
+                    loss = lagrangian_value(selected[index]) - lagrangian_value(alternative)
+                    replacements.append((loss, index, alternative))
+        if not replacements:
+            raise OptimizationError("could not repair heuristic upper bounds")
+        _, index, replacement = min(replacements, key=lambda item: item[0])
+        selected[index] = replacement
+
+    return _solve_segments(
+        tuple(selected),
+        budget,
+        stats,
+        adaptive=adaptive,
     )
 
 
@@ -377,10 +452,12 @@ def solve(
     stats: SolveStats | None = None,
 ) -> Solution:
     config = config or SolverConfig()
-    if any((config.heuristic_incumbent, config.best_bound, config.heuristic_only)):
+    if any((config.best_bound, config.heuristic_only)):
         raise ValueError("this solver configuration is not implemented yet")
     if config.dual_bounds and not config.recursive_enumeration:
         raise ValueError("dual_bounds requires recursive_enumeration")
+    if config.heuristic_incumbent and not config.dual_bounds:
+        raise ValueError("heuristic_incumbent requires dual_bounds")
     markets = tuple(markets)
     if not markets:
         raise ValueError("at least one market is required")
@@ -433,6 +510,22 @@ def solve(
                 stats.incumbent_updates += 1
 
     if config.dual_bounds:
+        if config.heuristic_incumbent:
+            best_allocations = _heuristic_allocation(
+                region_sets,
+                budget,
+                stats,
+                adaptive=config.adaptive_bisection,
+            )
+            best_income = sum(
+                market.income(allocation)
+                for market, allocation in zip(
+                    markets, best_allocations, strict=True
+                )
+            )
+            if stats is not None:
+                stats.incumbent_updates += 1
+
         def visit_bounded(
             options: tuple[tuple[_Segment, ...], ...],
             lower: float,
@@ -450,7 +543,7 @@ def solve(
                 budget,
                 stats,
                 adaptive=config.adaptive_bisection,
-            )
+            ).bound
             tolerance = max(1e-7, abs(best_income) * 1e-12)
             if best_allocations is not None and bound <= best_income + tolerance:
                 if stats is not None:

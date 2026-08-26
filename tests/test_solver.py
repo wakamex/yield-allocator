@@ -142,6 +142,31 @@ class SolverTests(unittest.TestCase):
         self.assertGreater(stats.dual_solves, 0)
         self.assertGreater(stats.bound_prunes, 0)
 
+    def test_heuristic_incumbent_preserves_exact_result(self) -> None:
+        markets = generate_markets(8, 10_000_000, 9876, "all-crossing")
+        exact_config = SolverConfig(
+            adaptive_bisection=True,
+            recursive_enumeration=True,
+            dual_bounds=True,
+        )
+        baseline = solve(markets, 10_000_000, config=exact_config)
+        stats = SolveStats()
+
+        initialized = solve(
+            markets,
+            10_000_000,
+            config=SolverConfig(
+                adaptive_bisection=True,
+                recursive_enumeration=True,
+                dual_bounds=True,
+                heuristic_incumbent=True,
+            ),
+            stats=stats,
+        )
+
+        self.assertAlmostEqual(initialized.annual_income, baseline.annual_income, places=6)
+        self.assertGreater(stats.incumbent_updates, 0)
+
 
 class EntrypointTests(unittest.TestCase):
     def assert_entrypoint(self, command: list[str]) -> None:
