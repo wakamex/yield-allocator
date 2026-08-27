@@ -1,0 +1,2825 @@
+Continue the historical conversation below. Treat the final User message as the current request. Base your response only on the conversation and repository snapshot included here.
+
+Assistant:
+Implemented, benchmarked, committed, and pushed.
+
+- Cached segment algebra: 2.33x faster on the previous recommended configuration
+- Attributed geo-mean speedup: 2.2382x
+- New recommended runtime: 0.025668 seconds
+- Total speedup over A0: 806.91x
+- Newton remains disabled because it was 0.23% slower in the final configuration
+- 25 tests pass and package builds succeed
+
+User:
+can we estimate how slow a 100-market solution would be, using the recommended result, by timeboxing a run and extrapolating?
+
+Assistant:
+For 20 deterministic stochastic 100-market all-crossing cases, each timeboxed at 10 seconds:
+
+- Median: 0.0185 seconds
+- Slowest initial run: 1.1747 seconds
+- Slowest repeated median: 1.2078 seconds
+- Timeouts: 0 of 20
+
+Fourteen cases were certified optimal at the root node. The harder cases visited about 100 nodes and consistently took 1.1 to 1.2 seconds. Branch-and-bound runtime is irregular, so the 0.0257-second 20-market result cannot be extrapolated directly by market count.
+
+User:
+can we estimate our big-o scaling?
+
+Assistant:
+The useful scaling model is runtime = O(n^2 + K * n * V), where n is markets, K is outer price iterations capped at 64, and V is branch-and-bound nodes evaluated. If c markets cross their kink, V can be O(2^c), giving O(n * 2^c), or O(n * 2^n) when all markets cross.
+
+Observed across 20 stochastic cases at each size:
+
+| Markets | Median | p95 | Maximum nodes |
+| ---: | ---: | ---: | ---: |
+| 20 | 0.0232 s | 0.0712 s | 23 |
+| 40 | 0.0084 s | 0.1942 s | 41 |
+| 60 | 0.0114 s | 0.4235 s | 65 |
+| 80 | 0.0153 s | 0.7566 s | 81 |
+| 100 | 0.0175 s | 1.1551 s | 101 |
+
+Typical sampled behavior is approximately O(n), sampled upper-tail behavior is approximately O(n^2), and the exact worst case remains O(n * 2^n).
+
+User:
+where does the extra n come from in the worst case
+
+Assistant:
+The extra n is the work at every branch-and-bound node. Each dual upper-bound evaluation scans all n markets during the common-price search, so each node costs O(n). The implementation also copies and scans an n-element segment-choice tuple when creating children. If bounds could be updated incrementally after each branching decision, node processing might approach O(1) or O(log n). The worst-case search would remain exponential, but it could become closer to O(2^n) or O(2^n log n).
+
+User:
+try harder
+
+Repository snapshot commit: 02aefa04665666cef6f8179221ed89e7103be101
+Repository snapshot tree: 94e93e87941531c13669d2c4c3d73e9898fc6b4d
+
+Ancestor commit subjects, oldest first:
+2360ea0a3bd3fe6779ba7baace3a9c01df85ed54 initial solver
+095f04cacf37979626c7cf1465f56651c4ac8621 Add instrumented A0 solver baseline
+1db9c1c54463e17678baf6e3b518d65dc14d678f Add adaptive bisection toggle
+44e16c9e90bbd0800d72d51043808932402dad41 Add recursive enumeration toggle
+18634c957c83fc060250d8ee890354e26a715168 Add dual-bound pruning toggle
+4575f136c4003e3913ee6a933efa997282f05e54 Add heuristic incumbent toggle
+d7f7f25a28522aa51c5411233d9c0ea899f508b9 Add best-bound traversal toggle
+da61735448a5e35913908e9e2e3510e9241b1afb Add heuristic-only toggle
+c2be47fbbfe6eecb5fefc646abfe69e91a93909b Add step-forward ablation runner
+c56b0e018bc3cc2c1f4ebffd3286d437f5fd3d3a Record step-forward ablation results
+93c046829804f5b2fe424dca59e7408663efd726 Generalize example and documentation
+7bb71346a4d88f3c327fba9cad17f4f2b2a15ad8 Add geo-mean feature contributions
+c7600504d87f71cb8eaeab0d5d5188e9c19f229c Fix public uv usage
+ef6f7b0b5ca68ed63dff99fa48aa7d9438f283ef Add closed-form marginal inversion ablation
+e408f6a160a1ee76c46d9113ea879a2b8c017463 Add safeguarded Newton price ablation
+52da6918276542b5076c7f79b7bb76a113670ac5 Select and document expanded ablation
+898221abfdbfe1691b69e61e2c5bfafb7720d725 Add cached segment algebra ablation
+0c9c7ea6676b944b729b84efac6680d017b71163 Measure heuristic-only benchmark exactness
+3c4a82b2b4a8e9f2ca0e14eb9efc61acacfbc394 Report contribution benchmark progress
+02aefa04665666cef6f8179221ed89e7103be101 Select and document cached algebra ablation
+
+Repository files at the snapshot commit:
+
+===== FILE: .gitignore =====
+/.venv/
+/dist/
+__pycache__/
+*.py[cod]
+
+===== END FILE: .gitignore =====
+
+===== FILE: .python-version =====
+3.14
+
+
+===== END FILE: .python-version =====
+
+===== FILE: README.md =====
+# Yield allocator
+
+This package allocates a fixed budget across utilization-based lending markets.
+It reads market state and rate curves from TOML, accounts for the rate impact of
+each deposit, and returns the highest-income allocation.
+
+Run the included case:
+
+```sh
+uv run --frozen yield-allocate examples/two_markets.toml
+```
+
+Get machine-readable output:
+
+```sh
+uv run --frozen yield-allocate examples/two_markets.toml --json
+```
+
+The input has one budget and one table per market:
+
+```toml
+budget = 7_500_000
+
+[[markets]]
+name = "Market Alpha"
+supply = 850_000_000
+borrow = 710_000_000
+kink = 0.87
+slope_1 = 0.035
+slope_2 = 0.18
+base_rate = 0.005
+reserve_factor = 0.10
+# max_allocation = 4_000_000
+```
+
+`base_rate` and `reserve_factor` default to zero. `max_allocation` is optional.
+Rates use decimal APR values.
+
+Run the tests:
+
+```sh
+uv run --frozen python -m unittest discover -s tests -v
+```
+
+Run the deterministic stochastic benchmark through 10 markets:
+
+```sh
+uv run --frozen yield-benchmark --max-markets 10 --trials 5
+```
+
+The default `mixed` profile generates markets below the kink, above an
+unreachable kink, and above a kink reachable within the budget. The
+`all-crossing` profile is an exponential-scaling stress test:
+
+```sh
+uv run --frozen yield-benchmark \
+  --profile all-crossing --max-markets 10 --trials 3
+```
+
+The seed defaults to `20260826` and can be changed with `--seed`. Market inputs
+are identical for repeated runs with the same seed, market count, trial, and
+profile. Runtime still varies with host load.
+
+Select a solver preset or override individual features:
+
+```sh
+uv run --frozen yield-allocate examples/two_markets.toml --preset a5
+
+uv run --frozen yield-allocate examples/two_markets.toml \
+  --adaptive-bisection \
+  --recursive-enumeration
+```
+
+Every feature flag also has a `--no-...` form, so a preset can be modified
+without defining another preset.
+
+`--closed-form-inversion` replaces the per-market inner bisection with a cached
+cubic inverse. `--newton-price-search` applies safeguarded Newton updates to the
+common portfolio price and falls back to a bracket midpoint when needed.
+`--cached-segment-algebra` precomputes fixed coefficients and endpoint
+marginals used in the hot loops. The three features are independent.
+
+The `recommended` preset is the fastest exact configuration selected by the
+fixed 20-market step-forward [ablation](benchmarks/ablation.md). It enables
+adaptive stopping, closed-form inversion, cached segment algebra, recursive
+enumeration, dual bounds, heuristic initialization, and best-bound traversal.
+Newton price search remains available as an override but is disabled in this
+preset.
+
+```sh
+uv run --frozen yield-allocate examples/two_markets.toml \
+  --preset recommended
+```
+
+Run the fixed 20-market step-forward ablation:
+
+```sh
+uv run --frozen yield-ablate --trials 3
+```
+
+Attribute the total speedup across features using every dependency-valid feature
+order:
+
+```sh
+uv run --frozen yield-ablate --contributions --trials 3
+```
+
+Progress is written to stderr as `[completed/total] configuration`. JSON output
+on stdout remains machine-readable.
+
+The reported geo-mean factor is the geometric mean of a feature's X-times
+speedup across valid addition orders. The feature factors multiply to the total
+speedup.
+
+===== END FILE: README.md =====
+
+===== FILE: benchmarks/ablation.md =====
+# Twenty-market step-forward solver ablation
+
+The benchmark uses `all_crossing_20.toml`. Timings cover only the solve call.
+Every exact configuration must reproduce the A0 annualized income and satisfy
+the $10 million allocation constraint.
+
+Input SHA-256: `e3a160d915259fa019d9954cf0f54c0a32600e43250b9849c6f590ba44e8c65a`
+
+Environment and protocol:
+
+- Python 3.14.7
+- three timed repetitions per configuration
+- median wall-clock solve time
+- input loading and generation excluded
+- garbage collection disabled during each solve
+- exact annualized income: $629,524.8846603513
+
+Each round holds the current winner fixed and tests every remaining eligible
+feature one at a time. The fastest exact candidate becomes the base for the
+next round. A candidate is eligible only after its required search machinery
+is enabled.
+
+| Round | Base | Candidate | Exact | Median s | Incremental speedup | Nodes | Fixed solves | Outer iterations | Inner iterations | Marginal evaluations | Selected |
+| ---: | --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |
+| 0 | A0 | baseline | yes | 20.711849 | 1.00x | 1,048,576 | 1,660 | 166,000 | 21,967,120 | 25,673,588 | yes |
+| 1 | A0 | adaptive bisection | yes | 6.694979 | 3.09x | 1,048,576 | 1,660 | 64,667 | 5,272,868 | 6,673,834 | no |
+| 1 | A0 | cached segment algebra | yes | 11.551759 | 1.79x | 1,048,576 | 1,660 | 166,000 | 21,967,120 | 25,673,588 | no |
+| 1 | A0 | closed-form inversion | yes | 4.682656 | 4.42x | 1,048,576 | 1,660 | 166,000 | 0 | 3,706,468 | yes |
+| 1 | A0 | Newton price search | yes | 7.556211 | 2.74x | 1,048,576 | 1,660 | 49,575 | 6,987,520 | 8,175,279 | no |
+| 1 | A0 | recursive enumeration | yes | 19.538432 | 1.06x | 9,935 | 1,660 | 166,000 | 21,967,120 | 25,673,588 | no |
+| 2 | closed form | adaptive bisection | yes | 2.663867 | 1.76x | 1,048,576 | 1,660 | 64,687 | 0 | 1,512,787 | no |
+| 2 | closed form | cached segment algebra | yes | 2.465823 | 1.90x | 1,048,576 | 1,660 | 166,000 | 0 | 3,706,468 | yes |
+| 2 | closed form | Newton price search | yes | 2.608519 | 1.80x | 1,048,576 | 1,660 | 49,662 | 0 | 1,189,778 | no |
+| 2 | closed form | recursive enumeration | yes | 3.625453 | 1.29x | 9,935 | 1,660 | 166,000 | 0 | 3,706,468 | no |
+| 3 | closed form + cache | adaptive bisection | yes | 1.743550 | 1.41x | 1,048,576 | 1,660 | 64,674 | 0 | 1,512,488 | no |
+| 3 | closed form + cache | Newton price search | yes | 1.811335 | 1.36x | 1,048,576 | 1,660 | 49,740 | 0 | 1,191,363 | no |
+| 3 | closed form + cache | recursive enumeration | yes | 1.595580 | 1.55x | 9,935 | 1,660 | 166,000 | 0 | 3,706,468 | yes |
+| 4 | previous winner | adaptive bisection | yes | 0.693875 | 2.30x | 9,935 | 1,660 | 64,674 | 0 | 1,512,488 | no |
+| 4 | previous winner | dual bounds | yes | 0.093968 | 16.98x | 67 | 2 | 3,650 | 0 | 120,199 | yes |
+| 4 | previous winner | Newton price search | yes | 0.763651 | 2.09x | 9,935 | 1,660 | 49,740 | 0 | 1,191,363 | no |
+| 5 | previous winner + dual bounds | adaptive bisection | yes | 0.092523 | 1.02x | 67 | 2 | 3,536 | 0 | 117,573 | no |
+| 5 | previous winner + dual bounds | best-bound traversal | yes | 0.055678 | 1.69x | 38 | 1 | 2,149 | 0 | 73,378 | no |
+| 5 | previous winner + dual bounds | heuristic incumbent | yes | 0.027471 | 3.42x | 15 | 1 | 963 | 0 | 38,779 | yes |
+| 5 | previous winner + dual bounds | Newton price search | yes | 0.082629 | 1.14x | 67 | 2 | 3,284 | 0 | 110,384 | no |
+| 6 | previous winner + heuristic | adaptive bisection | yes | 0.026646 | 1.03x | 15 | 1 | 908 | 0 | 37,569 | no |
+| 6 | previous winner + heuristic | best-bound traversal | yes | 0.025852 | 1.06x | 7 | 1 | 963 | 0 | 38,779 | yes |
+| 6 | previous winner + heuristic | Newton price search | yes | 0.025901 | 1.06x | 15 | 1 | 904 | 0 | 37,461 | no |
+| 7 | previous winner + best bound | adaptive bisection | yes | 0.025668 | 1.01x | 7 | 1 | 908 | 0 | 37,569 | yes |
+| 7 | previous winner + best bound | Newton price search | yes | 0.026319 | 0.98x | 7 | 1 | 904 | 0 | 37,461 | no |
+| 8 | recommended | Newton price search | yes | 0.025727 | 1.00x | 7 | 1 | 904 | 0 | 37,461 | yes, forced completion |
+| 9 | all exact features | heuristic only | observed yes | 0.002440 | 10.54x | 0 | 1 | 97 | 0 | 3,525 | no |
+
+## Recommended exact configuration runs in 0.025668 seconds
+
+The fastest step-forward configuration enables:
+
+- adaptive bisection
+- cached segment algebra
+- closed-form inversion
+- recursive enumeration
+- dual bounds
+- heuristic initialization
+- best-bound traversal
+
+It leaves Newton price search disabled. Its 0.025668 second median is 806.91
+times faster than A0. Closed-form inversion wins the first round at 4.42x and
+eliminates all 21,967,120 inner iterations.
+
+Cached segment algebra gives a 1.79x speedup by itself and a 1.90x speedup after
+closed-form inversion. In the contribution run, adding it to the previous
+recommended configuration reduces the median from 0.058937 to 0.025312 seconds,
+a 2.33x speedup with identical search work.
+
+Dual bounds reduce the search from 9,935 nodes and 1,660 fixed solves to 67
+nodes and two fixed solves. Heuristic initialization then cuts the search to 15
+nodes, and best-bound traversal cuts it to seven.
+
+Adding Newton price search to the final configuration takes 0.025727 seconds,
+0.23 percent slower than the recommended configuration. It remains available
+as a toggle but is disabled in the preset.
+
+The heuristic-only run happened to match the exact objective on this input and
+completed in 0.002440 seconds. It does not provide an exactness certificate, so
+it is not promoted as an exact solver.
+
+## Geo-mean feature factors multiply to a 797.18x full-feature speedup
+
+The dependency-aware Shapley calculation benchmarks all 96 valid exact feature
+combinations and averages each feature's X-times speedup across the 3,360 valid
+addition orders. This is a geometric mean. The attributed factors multiply to
+the total measured speedup.
+
+| Feature | Geo-mean attributed speedup | Share of log speedup |
+| --- | ---: | ---: |
+| Adaptive bisection | 1.4628x | 5.69% |
+| Closed-form inversion | 4.0589x | 20.97% |
+| Newton price search | 1.3312x | 4.28% |
+| Cached segment algebra | 2.2382x | 12.06% |
+| Recursive enumeration | 1.1786x | 2.46% |
+| Dual bounds | 13.1107x | 38.52% |
+| Heuristic incumbent | 2.1681x | 11.58% |
+| Best-bound traversal | 1.3450x | 4.44% |
+
+The factors multiply to 797.1803x, the three-trial median speedup from A0 to
+the configuration with all eight exact features. The recommended configuration
+is 818.95x faster than A0 in the same contribution run because it excludes
+Newton price search.
+
+Newton price search has a positive order-averaged factor because it helps when
+other price-search reductions are absent. The final configuration test still
+finds no benefit from adding it to the recommended feature set.
+
+===== END FILE: benchmarks/ablation.md =====
+
+===== FILE: benchmarks/all_crossing_20.toml =====
+budget = 10_000_000
+
+[[markets]]
+name = "Market 1"
+supply = 626124112.785718
+borrow = 582952137.6788913
+kink = 0.9176098799178468
+slope_1 = 0.04976344742044223
+slope_2 = 0.24802416974063762
+base_rate = 0.01455768055076211
+reserve_factor = 0.19837057335426767
+
+[[markets]]
+name = "Market 2"
+supply = 1038422109.9847822
+borrow = 856915437.0126493
+kink = 0.8225073850732735
+slope_1 = 0.03497570087833993
+slope_2 = 0.3270930909439655
+base_rate = 0.005570009079674978
+reserve_factor = 0.051928461390664066
+
+[[markets]]
+name = "Market 3"
+supply = 1683732402.2749753
+borrow = 1527410931.358351
+kink = 0.9059862047820036
+slope_1 = 0.040261273637035994
+slope_2 = 0.2877180249564761
+base_rate = 0.009544370379582324
+reserve_factor = 0.19724841020135814
+
+[[markets]]
+name = "Market 4"
+supply = 1875233698.8021374
+borrow = 1733553213.7213354
+kink = 0.9239485990906217
+slope_1 = 0.033320845663278316
+slope_2 = 0.25535544511734504
+base_rate = 0.0017724676982985787
+reserve_factor = 0.1972379790593179
+
+[[markets]]
+name = "Market 5"
+supply = 2649502629.6738
+borrow = 2243733714.9757967
+kink = 0.846472055876137
+slope_1 = 0.02096872506309719
+slope_2 = 0.2763646359850687
+base_rate = 0.017896185967940365
+reserve_factor = 0.00008285653921522029
+
+[[markets]]
+name = "Market 6"
+supply = 1196304497.625659
+borrow = 995636695.6341188
+kink = 0.8302072307583763
+slope_1 = 0.01279228985385272
+slope_2 = 0.1854512000749609
+base_rate = 0.01781067492176202
+reserve_factor = 0.1399755872533413
+
+[[markets]]
+name = "Market 7"
+supply = 1747070154.9535651
+borrow = 1657534881.7663913
+kink = 0.9473355208139782
+slope_1 = 0.06367538784506138
+slope_2 = 0.28246357796433846
+base_rate = 0.006199278391780874
+reserve_factor = 0.016368760084942424
+
+[[markets]]
+name = "Market 8"
+supply = 2371203044.0506196
+borrow = 2126358406.4469426
+kink = 0.8951094691462004
+slope_1 = 0.02903320814419451
+slope_2 = 0.0788664434963289
+base_rate = 0.0024836651818741463
+reserve_factor = 0.04218666468225382
+
+[[markets]]
+name = "Market 9"
+supply = 2598161798.1026917
+borrow = 2302362193.3754625
+kink = 0.8850526931720619
+slope_1 = 0.012049962665487987
+slope_2 = 0.056993729221318956
+base_rate = 0.004523580900966973
+reserve_factor = 0.09818821048193771
+
+[[markets]]
+name = "Market 10"
+supply = 1951891768.8414454
+borrow = 1663762889.0475667
+kink = 0.848978638910375
+slope_1 = 0.046062184018156496
+slope_2 = 0.13414991106745894
+base_rate = 0.01963092871543163
+reserve_factor = 0.19164297557996973
+
+[[markets]]
+name = "Market 11"
+supply = 2180547547.930628
+borrow = 1860153984.3640044
+kink = 0.8504277561941123
+slope_1 = 0.06108411033379422
+slope_2 = 0.15575273107317666
+base_rate = 0.014201803807066265
+reserve_factor = 0.22811881766617953
+
+[[markets]]
+name = "Market 12"
+supply = 2503974552.4677067
+borrow = 2314052429.268522
+kink = 0.9230179173512492
+slope_1 = 0.014479139397965957
+slope_2 = 0.12434656893513604
+base_rate = 0.0075404127463041684
+reserve_factor = 0.12364485389336341
+
+[[markets]]
+name = "Market 13"
+supply = 2918164713.312213
+borrow = 2646394157.7247295
+kink = 0.9041317127557333
+slope_1 = 0.03914931793700113
+slope_2 = 0.17023356213789018
+base_rate = 0.019176037777267115
+reserve_factor = 0.0475041964828192
+
+[[markets]]
+name = "Market 14"
+supply = 1735858203.6762216
+borrow = 1519796343.5919375
+kink = 0.8746545938771246
+slope_1 = 0.01229385496095772
+slope_2 = 0.18333197172423882
+base_rate = 0.018769241646864023
+reserve_factor = 0.11369216494926404
+
+[[markets]]
+name = "Market 15"
+supply = 687466927.2833146
+borrow = 565840130.503547
+kink = 0.8164865637381019
+slope_1 = 0.034875468372566026
+slope_2 = 0.3592359259925391
+base_rate = 0.012015263260522215
+reserve_factor = 0.016537912661459347
+
+[[markets]]
+name = "Market 16"
+supply = 2622478097.7522964
+borrow = 2182908025.2435865
+kink = 0.832184276121016
+slope_1 = 0.05038484347921767
+slope_2 = 0.13347702822989588
+base_rate = 0.001846032547312937
+reserve_factor = 0.05360459877610044
+
+[[markets]]
+name = "Market 17"
+supply = 2832503937.595184
+borrow = 2298656302.9777565
+kink = 0.8090639490722407
+slope_1 = 0.028714751725773743
+slope_2 = 0.21067568473555937
+base_rate = 0.012976856485365952
+reserve_factor = 0.14111363209436922
+
+[[markets]]
+name = "Market 18"
+supply = 2691848637.599561
+borrow = 2246088172.1746945
+kink = 0.8339919580503191
+slope_1 = 0.05644645328062983
+slope_2 = 0.31263576477647975
+base_rate = 0.01314589708620175
+reserve_factor = 0.13938535764221427
+
+[[markets]]
+name = "Market 19"
+supply = 2910160565.6547565
+borrow = 2735259756.4322853
+kink = 0.93924271953109
+slope_1 = 0.045848966050625974
+slope_2 = 0.14817939683221548
+base_rate = 0.006724038561791816
+reserve_factor = 0.0386479787933347
+
+[[markets]]
+name = "Market 20"
+supply = 1605502573.097148
+borrow = 1405621794.753389
+kink = 0.8738040165354872
+slope_1 = 0.059462137805662486
+slope_2 = 0.28519806915379287
+base_rate = 0.01512732885564677
+reserve_factor = 0.15826183964951393
+
+===== END FILE: benchmarks/all_crossing_20.toml =====
+
+===== FILE: examples/two_markets.toml =====
+budget = 7_500_000
+
+[[markets]]
+name = "Market Alpha"
+supply = 850_000_000
+borrow = 710_000_000
+kink = 0.87
+slope_1 = 0.035
+slope_2 = 0.18
+base_rate = 0.005
+reserve_factor = 0.10
+
+[[markets]]
+name = "Market Beta"
+supply = 1_400_000_000
+borrow = 1_050_000_000
+kink = 0.90
+slope_1 = 0.05
+slope_2 = 0.25
+base_rate = 0.003
+reserve_factor = 0.15
+
+===== END FILE: examples/two_markets.toml =====
+
+===== FILE: pyproject.toml =====
+[build-system]
+requires = ["uv_build>=0.11.29,<0.12"]
+build-backend = "uv_build"
+
+[project]
+name = "yield-allocator"
+version = "0.1.0"
+description = "Static allocation optimizer for utilization-based lending markets"
+requires-python = ">=3.11"
+dependencies = []
+
+[project.scripts]
+yield-allocate = "yield_allocator.cli:main"
+yield-ablate = "yield_allocator.ablation:main"
+yield-benchmark = "yield_allocator.benchmark:main"
+
+[tool.uv.build-backend]
+module-name = "yield_allocator"
+module-root = "src"
+
+===== END FILE: pyproject.toml =====
+
+===== FILE: src/yield_allocator/__init__.py =====
+from .solver import Market, Solution, SolveStats, SolverConfig, solve
+
+__all__ = ["Market", "Solution", "SolveStats", "SolverConfig", "solve"]
+
+===== END FILE: src/yield_allocator/__init__.py =====
+
+===== FILE: src/yield_allocator/__main__.py =====
+from .cli import main
+
+raise SystemExit(main())
+
+
+===== END FILE: src/yield_allocator/__main__.py =====
+
+===== FILE: src/yield_allocator/ablation.py =====
+from __future__ import annotations
+
+import argparse
+import gc
+import itertools
+import json
+import math
+import statistics
+import sys
+import time
+from dataclasses import asdict, dataclass
+from pathlib import Path
+from typing import Any, Callable
+
+from .cli import load_problem
+from .solver import Solution, SolveStats, SolverConfig, solve
+
+
+EXACT_FEATURES = (
+    "adaptive_bisection",
+    "closed_form_inversion",
+    "newton_price_search",
+    "cached_segment_algebra",
+    "recursive_enumeration",
+    "dual_bounds",
+    "heuristic_incumbent",
+    "best_bound",
+)
+DEPENDENCIES = {
+    "adaptive_bisection": frozenset(),
+    "closed_form_inversion": frozenset(),
+    "newton_price_search": frozenset(),
+    "cached_segment_algebra": frozenset(),
+    "recursive_enumeration": frozenset(),
+    "dual_bounds": frozenset({"recursive_enumeration"}),
+    "heuristic_incumbent": frozenset({"dual_bounds"}),
+    "best_bound": frozenset({"dual_bounds"}),
+}
+
+
+@dataclass(frozen=True)
+class Measurement:
+    round: int
+    base: str
+    candidate: str
+    features: tuple[str, ...]
+    selected: bool
+    exact: bool
+    median_seconds: float
+    incremental_speedup: float
+    annual_income: float
+    objective_gap: float
+    stats: dict[str, int]
+
+
+@dataclass(frozen=True)
+class Contribution:
+    feature: str
+    log_contribution: float
+    attributed_speedup: float
+    log_speedup_share: float
+
+
+@dataclass(frozen=True)
+class ContributionResult:
+    configuration_seconds: dict[str, float]
+    contributions: tuple[Contribution, ...]
+    valid_orders: int
+    total_speedup: float
+
+
+def config_for(features: set[str], *, heuristic_only: bool = False) -> SolverConfig:
+    return SolverConfig(
+        adaptive_bisection="adaptive_bisection" in features,
+        closed_form_inversion="closed_form_inversion" in features,
+        newton_price_search="newton_price_search" in features,
+        cached_segment_algebra="cached_segment_algebra" in features,
+        recursive_enumeration="recursive_enumeration" in features,
+        dual_bounds="dual_bounds" in features,
+        heuristic_incumbent="heuristic_incumbent" in features,
+        best_bound="best_bound" in features,
+        heuristic_only=heuristic_only,
+    )
+
+
+def _measure(
+    markets: list,
+    budget: float,
+    config: SolverConfig,
+    trials: int,
+) -> tuple[float, Solution, SolveStats]:
+    durations = []
+    solution = None
+    final_stats = None
+    for _ in range(trials):
+        stats = SolveStats()
+        gc.collect()
+        was_enabled = gc.isenabled()
+        gc.disable()
+        started = time.perf_counter_ns()
+        try:
+            result = solve(markets, budget, config=config, stats=stats)
+        finally:
+            duration = time.perf_counter_ns() - started
+            if was_enabled:
+                gc.enable()
+        if not abs(sum(result.allocations) - budget) <= max(1e-7, budget * 1e-12):
+            raise RuntimeError("solver returned an invalid allocation")
+        durations.append(duration / 1_000_000_000)
+        solution = result
+        final_stats = stats
+    assert solution is not None and final_stats is not None
+    return statistics.median(durations), solution, final_stats
+
+
+def run_step_forward(
+    path: Path,
+    *,
+    trials: int = 3,
+) -> list[Measurement]:
+    if trials < 1:
+        raise ValueError("trials must be positive")
+    budget, markets = load_problem(path)
+
+    baseline_time, baseline_solution, baseline_stats = _measure(
+        markets, budget, SolverConfig(), trials
+    )
+    optimum = baseline_solution.annual_income
+    measurements = [
+        Measurement(
+            round=0,
+            base="A0",
+            candidate="baseline",
+            features=(),
+            selected=True,
+            exact=True,
+            median_seconds=baseline_time,
+            incremental_speedup=1.0,
+            annual_income=optimum,
+            objective_gap=0.0,
+            stats=asdict(baseline_stats),
+        )
+    ]
+
+    selected: set[str] = set()
+    remaining = set(EXACT_FEATURES)
+    current_time = baseline_time
+    round_number = 1
+
+    while remaining:
+        eligible = sorted(
+            feature
+            for feature in remaining
+            if DEPENDENCIES[feature] <= selected
+        )
+        if not eligible:
+            raise RuntimeError("no eligible step-forward feature remains")
+
+        candidates = []
+        for feature in eligible:
+            features = selected | {feature}
+            duration, solution, stats = _measure(
+                markets,
+                budget,
+                config_for(features),
+                trials,
+            )
+            gap = max(0.0, (optimum - solution.annual_income) / optimum)
+            exact = abs(solution.annual_income - optimum) <= max(
+                1e-6, abs(optimum) * 1e-10
+            )
+            candidates.append((feature, duration, solution, stats, gap, exact))
+
+        exact_candidates = [candidate for candidate in candidates if candidate[5]]
+        if not exact_candidates:
+            raise RuntimeError(f"round {round_number} has no exact candidate")
+        winner = min(exact_candidates, key=lambda candidate: candidate[1])[0]
+
+        base_label = "+".join(sorted(selected)) or "A0"
+        for feature, duration, solution, stats, gap, exact in candidates:
+            measurements.append(
+                Measurement(
+                    round=round_number,
+                    base=base_label,
+                    candidate=feature,
+                    features=tuple(sorted(selected | {feature})),
+                    selected=feature == winner,
+                    exact=exact,
+                    median_seconds=duration,
+                    incremental_speedup=current_time / duration,
+                    annual_income=solution.annual_income,
+                    objective_gap=gap,
+                    stats=asdict(stats),
+                )
+            )
+
+        winner_measurement = next(
+            measurement
+            for measurement in reversed(measurements)
+            if measurement.round == round_number and measurement.selected
+        )
+        selected.add(winner)
+        remaining.remove(winner)
+        current_time = winner_measurement.median_seconds
+        round_number += 1
+
+    duration, solution, stats = _measure(
+        markets,
+        budget,
+        config_for(selected, heuristic_only=True),
+        trials,
+    )
+    gap = max(0.0, (optimum - solution.annual_income) / optimum)
+    exact = abs(solution.annual_income - optimum) <= max(
+        1e-6, abs(optimum) * 1e-10
+    )
+    measurements.append(
+        Measurement(
+            round=round_number,
+            base="+".join(sorted(selected)),
+            candidate="heuristic_only",
+            features=tuple(sorted((*selected, "heuristic_only"))),
+            selected=False,
+            exact=exact,
+            median_seconds=duration,
+            incremental_speedup=current_time / duration,
+            annual_income=solution.annual_income,
+            objective_gap=gap,
+            stats=asdict(stats),
+        )
+    )
+    return measurements
+
+
+def valid_feature_sets() -> tuple[frozenset[str], ...]:
+    valid = []
+    for count in range(len(EXACT_FEATURES) + 1):
+        for features in itertools.combinations(EXACT_FEATURES, count):
+            feature_set = frozenset(features)
+            if all(DEPENDENCIES[feature] <= feature_set for feature in feature_set):
+                valid.append(feature_set)
+    return tuple(valid)
+
+
+def valid_feature_orders() -> tuple[tuple[str, ...], ...]:
+    orders = []
+    for order in itertools.permutations(EXACT_FEATURES):
+        positions = {feature: index for index, feature in enumerate(order)}
+        if all(
+            positions[dependency] < positions[feature]
+            for feature, dependencies in DEPENDENCIES.items()
+            for dependency in dependencies
+        ):
+            orders.append(order)
+    return tuple(orders)
+
+
+def run_contributions(
+    path: Path,
+    *,
+    trials: int = 3,
+    progress: Callable[[int, int, str], None] | None = None,
+) -> ContributionResult:
+    if trials < 1:
+        raise ValueError("trials must be positive")
+    budget, markets = load_problem(path)
+    runtimes: dict[frozenset[str], float] = {}
+    optimum = None
+
+    feature_sets = valid_feature_sets()
+    for completed, features in enumerate(feature_sets, start=1):
+        duration, solution, _ = _measure(
+            markets,
+            budget,
+            config_for(set(features)),
+            trials,
+        )
+        if optimum is None:
+            optimum = solution.annual_income
+        if abs(solution.annual_income - optimum) > max(1e-6, abs(optimum) * 1e-10):
+            raise RuntimeError(f"configuration {sorted(features)} is not exact")
+        runtimes[features] = duration
+        if progress is not None:
+            progress(
+                completed,
+                len(feature_sets),
+                "+".join(sorted(features)) or "baseline",
+            )
+
+    orders = valid_feature_orders()
+    log_contributions = {feature: 0.0 for feature in EXACT_FEATURES}
+    for order in orders:
+        enabled: frozenset[str] = frozenset()
+        for feature in order:
+            expanded = enabled | {feature}
+            log_contributions[feature] += math.log(
+                runtimes[enabled] / runtimes[expanded]
+            )
+            enabled = expanded
+
+    baseline = runtimes[frozenset()]
+    complete = runtimes[frozenset(EXACT_FEATURES)]
+    total_log_speedup = math.log(baseline / complete)
+    contributions = []
+    for feature in EXACT_FEATURES:
+        contribution = log_contributions[feature] / len(orders)
+        contributions.append(
+            Contribution(
+                feature=feature,
+                log_contribution=contribution,
+                attributed_speedup=math.exp(contribution),
+                log_speedup_share=contribution / total_log_speedup,
+            )
+        )
+
+    configuration_seconds = {
+        "+".join(sorted(features)) or "baseline": duration
+        for features, duration in runtimes.items()
+    }
+    return ContributionResult(
+        configuration_seconds=configuration_seconds,
+        contributions=tuple(contributions),
+        valid_orders=len(orders),
+        total_speedup=baseline / complete,
+    )
+
+
+def format_results(measurements: list[Measurement]) -> str:
+    lines = [
+        "| Round | Base | Candidate | Exact | Median s | Speedup | Nodes | Fixed solves | Outer iterations | Inner iterations | Marginal evaluations | Bound prunes | Gap | Selected |",
+        "| ---: | --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |",
+    ]
+    for result in measurements:
+        nodes = result.stats["nodes_visited"] or result.stats["combinations_visited"]
+        lines.append(
+            f"| {result.round} | {result.base} | {result.candidate} "
+            f"| {'yes' if result.exact else 'no'} | {result.median_seconds:.6f} "
+            f"| {result.incremental_speedup:.2f}x | {nodes} "
+            f"| {result.stats['fixed_region_solves']} "
+            f"| {result.stats['outer_iterations']} "
+            f"| {result.stats['inner_iterations']} "
+            f"| {result.stats['marginal_evaluations']} "
+            f"| {result.stats['bound_prunes']} | {result.objective_gap:.6%} "
+            f"| {'yes' if result.selected else 'no'} |"
+        )
+    return "\n".join(lines)
+
+
+def format_contributions(result: ContributionResult) -> str:
+    lines = [
+        "Each factor is the geometric mean of the feature's X-times speedup across valid addition orders. The factors multiply to the total speedup.",
+        "",
+        "| Feature | Geo-mean attributed speedup | Share of log speedup |",
+        "| --- | ---: | ---: |",
+    ]
+    for contribution in result.contributions:
+        lines.append(
+            f"| {contribution.feature} | {contribution.attributed_speedup:.4f}x "
+            f"| {contribution.log_speedup_share:.2%} |"
+        )
+    lines.extend(
+        (
+            "",
+            f"Valid feature orders: {result.valid_orders}",
+            f"Total speedup with all exact features: {result.total_speedup:.4f}x",
+        )
+    )
+    return "\n".join(lines)
+
+
+def parser() -> argparse.ArgumentParser:
+    argument_parser = argparse.ArgumentParser(
+        description="Run the step-forward solver feature ablation."
+    )
+    argument_parser.add_argument(
+        "input",
+        nargs="?",
+        type=Path,
+        default=Path("benchmarks/all_crossing_20.toml"),
+    )
+    argument_parser.add_argument("--trials", type=int, default=3)
+    argument_parser.add_argument("--contributions", action="store_true")
+    argument_parser.add_argument("--json", action="store_true")
+    return argument_parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    arguments = parser().parse_args(argv)
+    try:
+        if arguments.contributions:
+            result = run_contributions(
+                arguments.input,
+                trials=arguments.trials,
+                progress=lambda completed, total, name: print(
+                    f"[{completed}/{total}] {name}",
+                    file=sys.stderr,
+                    flush=True,
+                ),
+            )
+        else:
+            result = run_step_forward(arguments.input, trials=arguments.trials)
+    except (OSError, ValueError) as error:
+        parser().error(str(error))
+
+    if arguments.json:
+        output: Any
+        if isinstance(result, ContributionResult):
+            output = asdict(result)
+        else:
+            output = [asdict(measurement) for measurement in result]
+        print(json.dumps(output, indent=2))
+    elif isinstance(result, ContributionResult):
+        print(format_contributions(result))
+    else:
+        print(format_results(result))
+    return 0
+
+===== END FILE: src/yield_allocator/ablation.py =====
+
+===== FILE: src/yield_allocator/benchmark.py =====
+from __future__ import annotations
+
+import argparse
+import gc
+import json
+import math
+import random
+import statistics
+import time
+from dataclasses import asdict, dataclass
+from typing import Any
+
+from .solver import Market, solve
+
+
+@dataclass(frozen=True)
+class BenchmarkRow:
+    markets: int
+    trials: int
+    mean_crossing_markets: float
+    mean_region_combinations: float
+    median_ms: float
+    p95_ms: float
+    max_ms: float
+
+
+def generate_markets(
+    count: int,
+    budget: float,
+    seed: int,
+    profile: str = "mixed",
+) -> list[Market]:
+    if count < 1:
+        raise ValueError("market count must be positive")
+    if budget <= 0:
+        raise ValueError("budget must be positive")
+    if profile not in {"mixed", "all-crossing"}:
+        raise ValueError("profile must be mixed or all-crossing")
+
+    rng = random.Random(seed)
+    markets = []
+    for index in range(count):
+        supply = rng.uniform(500_000_000, 3_000_000_000)
+        kink = rng.uniform(0.80, 0.95)
+        slope_1 = rng.uniform(0.01, 0.08)
+        slope_2 = rng.uniform(0.05, 0.40)
+        base_rate = rng.uniform(0, 0.02)
+        reserve_factor = rng.uniform(0, 0.25)
+
+        if profile == "all-crossing" or rng.random() < 0.5:
+            kink_allocation = rng.uniform(0.05 * budget, 0.95 * budget)
+            borrow = kink * (supply + kink_allocation)
+        elif rng.random() < 0.8:
+            utilization = rng.uniform(0.45, 0.98 * kink)
+            borrow = utilization * supply
+        else:
+            maximum_kink_allocation = supply * (1 / kink - 1)
+            lower = 1.05 * budget
+            upper = min(2 * budget, 0.95 * maximum_kink_allocation)
+            if upper > lower:
+                kink_allocation = rng.uniform(lower, upper)
+                borrow = kink * (supply + kink_allocation)
+            else:
+                utilization = rng.uniform(0.45, 0.98 * kink)
+                borrow = utilization * supply
+
+        markets.append(
+            Market(
+                name=f"Market {index + 1}",
+                supply=supply,
+                borrow=borrow,
+                kink=kink,
+                slope_1=slope_1,
+                slope_2=slope_2,
+                base_rate=base_rate,
+                reserve_factor=reserve_factor,
+            )
+        )
+    return markets
+
+
+def crossing_market_count(markets: list[Market], budget: float) -> int:
+    return sum(0 < market.kink_allocation < budget for market in markets)
+
+
+def run_benchmark(
+    *,
+    min_markets: int = 2,
+    max_markets: int = 10,
+    trials: int = 5,
+    budget: float = 10_000_000,
+    seed: int = 20260826,
+    profile: str = "mixed",
+) -> list[BenchmarkRow]:
+    if not 1 <= min_markets <= max_markets:
+        raise ValueError("market range must be positive and ordered")
+    if trials < 1:
+        raise ValueError("trials must be positive")
+
+    warmup = generate_markets(min(2, min_markets), budget, seed - 1, profile)
+    solve(warmup, budget)
+
+    rows = []
+    for market_count in range(min_markets, max_markets + 1):
+        durations = []
+        crossing_counts = []
+        region_counts = []
+
+        for trial in range(trials):
+            case_seed = seed + market_count * 1_000_003 + trial * 97_409
+            markets = generate_markets(market_count, budget, case_seed, profile)
+            crossing = crossing_market_count(markets, budget)
+
+            gc.collect()
+            gc.disable()
+            started = time.perf_counter_ns()
+            try:
+                solution = solve(markets, budget)
+            finally:
+                duration = time.perf_counter_ns() - started
+                gc.enable()
+
+            if not math.isclose(sum(solution.allocations), budget, rel_tol=1e-12):
+                raise RuntimeError("benchmark solver returned an invalid allocation")
+            durations.append(duration / 1_000_000)
+            crossing_counts.append(crossing)
+            region_counts.append(2**crossing)
+
+        ordered = sorted(durations)
+        p95_index = math.ceil(0.95 * len(ordered)) - 1
+        rows.append(
+            BenchmarkRow(
+                markets=market_count,
+                trials=trials,
+                mean_crossing_markets=statistics.fmean(crossing_counts),
+                mean_region_combinations=statistics.fmean(region_counts),
+                median_ms=statistics.median(durations),
+                p95_ms=ordered[p95_index],
+                max_ms=max(durations),
+            )
+        )
+    return rows
+
+
+def format_results(rows: list[BenchmarkRow], configuration: dict[str, Any]) -> str:
+    lines = [
+        f"Profile: {configuration['profile']}",
+        f"Seed: {configuration['seed']}",
+        f"Budget: ${configuration['budget']:,.0f}",
+        "",
+        "| Markets | Trials | Mean crossing | Mean regions | Median ms | p95 ms | Max ms |",
+        "| ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
+    ]
+    for row in rows:
+        lines.append(
+            f"| {row.markets} | {row.trials} | {row.mean_crossing_markets:.1f} "
+            f"| {row.mean_region_combinations:.1f} | {row.median_ms:.3f} "
+            f"| {row.p95_ms:.3f} | {row.max_ms:.3f} |"
+        )
+    return "\n".join(lines)
+
+
+def parser() -> argparse.ArgumentParser:
+    argument_parser = argparse.ArgumentParser(
+        description="Benchmark the yield allocator on deterministic random markets."
+    )
+    argument_parser.add_argument("--min-markets", type=int, default=2)
+    argument_parser.add_argument("--max-markets", type=int, default=10)
+    argument_parser.add_argument("--trials", type=int, default=5)
+    argument_parser.add_argument("--budget", type=float, default=10_000_000)
+    argument_parser.add_argument("--seed", type=int, default=20260826)
+    argument_parser.add_argument(
+        "--profile", choices=("mixed", "all-crossing"), default="mixed"
+    )
+    argument_parser.add_argument("--json", action="store_true")
+    return argument_parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    arguments = parser().parse_args(argv)
+    configuration = {
+        "min_markets": arguments.min_markets,
+        "max_markets": arguments.max_markets,
+        "trials": arguments.trials,
+        "budget": arguments.budget,
+        "seed": arguments.seed,
+        "profile": arguments.profile,
+    }
+    try:
+        rows = run_benchmark(**configuration)
+    except ValueError as error:
+        parser().error(str(error))
+
+    if arguments.json:
+        print(
+            json.dumps(
+                {"configuration": configuration, "results": [asdict(row) for row in rows]},
+                indent=2,
+            )
+        )
+    else:
+        print(format_results(rows, configuration))
+    return 0
+
+===== END FILE: src/yield_allocator/benchmark.py =====
+
+===== FILE: src/yield_allocator/cli.py =====
+from __future__ import annotations
+
+import argparse
+from dataclasses import replace
+import json
+import tomllib
+from pathlib import Path
+from typing import Any
+
+from .solver import PRESETS, Market, Solution, solve
+
+
+def load_problem(path: Path) -> tuple[float, list[Market]]:
+    with path.open("rb") as input_file:
+        data = tomllib.load(input_file)
+
+    try:
+        budget = float(data["budget"])
+        market_inputs = data["markets"]
+    except (KeyError, TypeError, ValueError) as error:
+        raise ValueError("input requires a numeric budget and a markets array") from error
+
+    if not isinstance(market_inputs, list):
+        raise ValueError("markets must be an array of tables")
+
+    markets = []
+    for index, values in enumerate(market_inputs, start=1):
+        if not isinstance(values, dict):
+            raise ValueError("each market must be a table")
+        try:
+            markets.append(Market(**values))
+        except TypeError as error:
+            raise ValueError(f"market {index}: {error}") from error
+    return budget, markets
+
+
+def result_data(solution: Solution) -> dict[str, Any]:
+    market_results = []
+    for market, allocation in zip(
+        solution.markets, solution.allocations, strict=True
+    ):
+        market_results.append(
+            {
+                "name": market.name,
+                "allocation": allocation,
+                "initial_utilization": market.utilization(0),
+                "final_utilization": market.utilization(allocation),
+                "initial_supply_apr": market.supply_rate(0),
+                "final_supply_apr": market.supply_rate(allocation),
+                "annual_income": market.income(allocation),
+            }
+        )
+    return {
+        "budget": solution.budget,
+        "portfolio_supply_apr": solution.portfolio_rate,
+        "annual_income": solution.annual_income,
+        "markets": market_results,
+    }
+
+
+def format_result(solution: Solution) -> str:
+    data = result_data(solution)
+    lines = [
+        f"Budget: ${data['budget']:,.2f}",
+        f"Portfolio supply APR: {data['portfolio_supply_apr']:.6%}",
+        f"Annualized income: ${data['annual_income']:,.2f}",
+        "",
+    ]
+    for market in data["markets"]:
+        lines.extend(
+            (
+                market["name"],
+                f"  Allocation: ${market['allocation']:,.2f}",
+                f"  Utilization: {market['initial_utilization']:.6%} -> "
+                f"{market['final_utilization']:.6%}",
+                f"  Supply APR: {market['initial_supply_apr']:.6%} -> "
+                f"{market['final_supply_apr']:.6%}",
+                f"  Annualized income: ${market['annual_income']:,.2f}",
+            )
+        )
+    return "\n".join(lines)
+
+
+def parser() -> argparse.ArgumentParser:
+    argument_parser = argparse.ArgumentParser(
+        description="Optimize a static USDC lending allocation."
+    )
+    argument_parser.add_argument("input", type=Path, help="TOML problem file")
+    argument_parser.add_argument(
+        "--json", action="store_true", help="print machine-readable JSON"
+    )
+    argument_parser.add_argument(
+        "--preset", choices=tuple(PRESETS), default="a0", help="solver preset"
+    )
+    for feature in (
+        "adaptive_bisection",
+        "closed_form_inversion",
+        "newton_price_search",
+        "cached_segment_algebra",
+        "recursive_enumeration",
+        "dual_bounds",
+        "heuristic_incumbent",
+        "best_bound",
+        "heuristic_only",
+    ):
+        argument_parser.add_argument(
+            f"--{feature.replace('_', '-')}",
+            action=argparse.BooleanOptionalAction,
+            default=None,
+        )
+    return argument_parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    arguments = parser().parse_args(argv)
+    try:
+        budget, markets = load_problem(arguments.input)
+        config = PRESETS[arguments.preset]
+        for feature in (
+            "adaptive_bisection",
+            "closed_form_inversion",
+            "newton_price_search",
+            "cached_segment_algebra",
+            "recursive_enumeration",
+            "dual_bounds",
+            "heuristic_incumbent",
+            "best_bound",
+            "heuristic_only",
+        ):
+            value = getattr(arguments, feature)
+            if value is not None:
+                config = replace(config, **{feature: value})
+        solution = solve(markets, budget, config=config)
+    except (OSError, ValueError) as error:
+        parser().error(str(error))
+
+    if arguments.json:
+        print(json.dumps(result_data(solution), indent=2))
+    else:
+        print(format_result(solution))
+    return 0
+
+===== END FILE: src/yield_allocator/cli.py =====
+
+===== FILE: src/yield_allocator/solver.py =====
+from __future__ import annotations
+
+from dataclasses import dataclass
+import heapq
+from itertools import product
+import math
+from math import isfinite
+
+
+class OptimizationError(ValueError):
+    pass
+
+
+@dataclass(frozen=True)
+class Market:
+    name: str
+    supply: float
+    borrow: float
+    kink: float
+    slope_1: float
+    slope_2: float
+    base_rate: float = 0.0
+    reserve_factor: float = 0.0
+    max_allocation: float | None = None
+
+    def __post_init__(self) -> None:
+        values = (
+            self.supply,
+            self.borrow,
+            self.kink,
+            self.slope_1,
+            self.slope_2,
+            self.base_rate,
+            self.reserve_factor,
+        )
+        if not self.name.strip():
+            raise ValueError("market name cannot be empty")
+        if not all(isfinite(value) for value in values):
+            raise ValueError(f"{self.name}: inputs must be finite")
+        if self.supply <= 0:
+            raise ValueError(f"{self.name}: supply must be positive")
+        if not 0 <= self.borrow <= self.supply:
+            raise ValueError(f"{self.name}: borrow must be between zero and supply")
+        if not 0 < self.kink < 1:
+            raise ValueError(f"{self.name}: kink must be between zero and one")
+        if min(self.slope_1, self.slope_2, self.base_rate) < 0:
+            raise ValueError(f"{self.name}: rates and slopes cannot be negative")
+        if not 0 <= self.reserve_factor < 1:
+            raise ValueError(f"{self.name}: reserve_factor must be in [0, 1)")
+        if self.max_allocation is not None:
+            if not isfinite(self.max_allocation) or self.max_allocation < 0:
+                raise ValueError(f"{self.name}: max_allocation cannot be negative")
+
+    def utilization(self, allocation: float) -> float:
+        return self.borrow / (self.supply + allocation)
+
+    def borrow_rate(self, allocation: float) -> float:
+        utilization = self.utilization(allocation)
+        if utilization <= self.kink:
+            return self.base_rate + self.slope_1 * utilization
+        return (
+            self.base_rate
+            + self.slope_1 * self.kink
+            + (utilization - self.kink) / (1 - self.kink) * self.slope_2
+        )
+
+    def supply_rate(self, allocation: float) -> float:
+        utilization = self.utilization(allocation)
+        return utilization * self.borrow_rate(allocation) * (1 - self.reserve_factor)
+
+    def income(self, allocation: float) -> float:
+        return allocation * self.supply_rate(allocation)
+
+    @property
+    def kink_allocation(self) -> float:
+        return self.borrow / self.kink - self.supply
+
+    def _curve(self, branch: str) -> tuple[float, float]:
+        if branch == "low":
+            return self.base_rate, self.slope_1
+        slope = self.slope_2 / (1 - self.kink)
+        intercept = self.base_rate + self.slope_1 * self.kink - slope * self.kink
+        return intercept, slope
+
+    def marginal_income(self, allocation: float, branch: str) -> float:
+        intercept, slope = self._curve(branch)
+        total_supply = self.supply + allocation
+        retained = 1 - self.reserve_factor
+        return retained * (
+            intercept * self.borrow * self.supply / total_supply**2
+            + slope
+            * self.borrow**2
+            * (self.supply - allocation)
+            / total_supply**3
+        )
+
+    def marginal_income_slope(self, allocation: float, branch: str) -> float:
+        intercept, slope = self._curve(branch)
+        total_supply = self.supply + allocation
+        retained = 1 - self.reserve_factor
+        return 2 * retained * (
+            -intercept * self.borrow * self.supply / total_supply**3
+            + slope
+            * self.borrow**2
+            * (allocation - 2 * self.supply)
+            / total_supply**4
+        )
+
+
+@dataclass(frozen=True)
+class Solution:
+    budget: float
+    markets: tuple[Market, ...]
+    allocations: tuple[float, ...]
+
+    @property
+    def annual_income(self) -> float:
+        return sum(
+            market.income(allocation)
+            for market, allocation in zip(self.markets, self.allocations, strict=True)
+        )
+
+    @property
+    def portfolio_rate(self) -> float:
+        return self.annual_income / self.budget if self.budget else 0.0
+
+
+@dataclass(frozen=True)
+class SolverConfig:
+    adaptive_bisection: bool = False
+    closed_form_inversion: bool = False
+    newton_price_search: bool = False
+    cached_segment_algebra: bool = False
+    recursive_enumeration: bool = False
+    dual_bounds: bool = False
+    heuristic_incumbent: bool = False
+    best_bound: bool = False
+    heuristic_only: bool = False
+
+
+@dataclass
+class SolveStats:
+    possible_region_combinations: int = 0
+    combinations_visited: int = 0
+    feasibility_prunes: int = 0
+    fixed_region_solves: int = 0
+    outer_iterations: int = 0
+    inner_iterations: int = 0
+    marginal_evaluations: int = 0
+    closed_form_evaluations: int = 0
+    closed_form_fallbacks: int = 0
+    newton_steps: int = 0
+    newton_fallbacks: int = 0
+    nodes_visited: int = 0
+    bound_prunes: int = 0
+    dual_solves: int = 0
+    incumbent_updates: int = 0
+
+
+PRESETS = {
+    "a0": SolverConfig(),
+    "a1": SolverConfig(adaptive_bisection=True),
+    "a2": SolverConfig(adaptive_bisection=True, recursive_enumeration=True),
+    "a3": SolverConfig(
+        adaptive_bisection=True,
+        recursive_enumeration=True,
+        dual_bounds=True,
+    ),
+    "a4": SolverConfig(
+        adaptive_bisection=True,
+        recursive_enumeration=True,
+        dual_bounds=True,
+        heuristic_incumbent=True,
+    ),
+    "a5": SolverConfig(
+        adaptive_bisection=True,
+        recursive_enumeration=True,
+        dual_bounds=True,
+        heuristic_incumbent=True,
+        best_bound=True,
+    ),
+    "h1": SolverConfig(
+        adaptive_bisection=True,
+        recursive_enumeration=True,
+        dual_bounds=True,
+        heuristic_incumbent=True,
+        best_bound=True,
+        heuristic_only=True,
+    ),
+    "recommended": SolverConfig(
+        adaptive_bisection=True,
+        closed_form_inversion=True,
+        cached_segment_algebra=True,
+        recursive_enumeration=True,
+        dual_bounds=True,
+        heuristic_incumbent=True,
+        best_bound=True,
+    ),
+}
+
+
+@dataclass(frozen=True)
+class _Segment:
+    market: Market
+    branch: str
+    lower: float
+    upper: float
+    inverse_linear: float
+    inverse_constant: float
+    income_linear: float
+    income_quadratic: float
+    lower_ratio: float
+    upper_ratio: float
+    lower_marginal: float
+    upper_marginal: float
+
+    def marginal(self, allocation: float, *, cached: bool = False) -> float:
+        if not cached:
+            return self.market.marginal_income(allocation, self.branch)
+        ratio = 1 + allocation / self.market.supply
+        inverse_ratio = 1 / ratio
+        return (
+            self.inverse_linear + self.inverse_constant * inverse_ratio
+        ) * inverse_ratio**2
+
+    def marginal_slope(self, allocation: float, *, cached: bool = False) -> float:
+        if not cached:
+            return self.market.marginal_income_slope(allocation, self.branch)
+        ratio = 1 + allocation / self.market.supply
+        inverse_ratio = 1 / ratio
+        return (
+            -2 * self.inverse_linear
+            - 3 * self.inverse_constant * inverse_ratio
+        ) * inverse_ratio**3 / self.market.supply
+
+    def income(self, allocation: float, *, cached: bool = False) -> float:
+        if not cached:
+            return self.market.income(allocation)
+        ratio = 1 + allocation / self.market.supply
+        inverse_ratio = 1 / ratio
+        return allocation * (
+            self.income_linear + self.income_quadratic * inverse_ratio
+        ) * inverse_ratio
+
+
+@dataclass(frozen=True)
+class _DualResult:
+    bound: float
+    price: float
+    segments: tuple[_Segment, ...]
+
+
+def _marginal(
+    segment: _Segment,
+    allocation: float,
+    stats: SolveStats | None,
+    *,
+    cached: bool = False,
+) -> float:
+    if stats is not None:
+        stats.marginal_evaluations += 1
+    if cached:
+        if allocation == segment.lower:
+            return segment.lower_marginal
+        if allocation == segment.upper:
+            return segment.upper_marginal
+    return segment.marginal(allocation, cached=cached)
+
+
+def _segments(market: Market, budget: float) -> tuple[_Segment, ...]:
+    cap = budget if market.max_allocation is None else market.max_allocation
+    upper = min(budget, cap)
+    kink = market.kink_allocation
+    segments: list[_Segment] = []
+
+    def segment(branch: str, lower: float, upper: float) -> _Segment:
+        intercept, slope = market._curve(branch)
+        utilization = market.borrow / market.supply
+        retained = 1 - market.reserve_factor
+        inverse_linear = retained * (
+            intercept * utilization - slope * utilization**2
+        )
+        inverse_constant = 2 * retained * slope * utilization**2
+        lower_ratio = 1 + lower / market.supply
+        upper_ratio = 1 + upper / market.supply
+        return _Segment(
+            market=market,
+            branch=branch,
+            lower=lower,
+            upper=upper,
+            inverse_linear=inverse_linear,
+            inverse_constant=inverse_constant,
+            income_linear=retained * intercept * utilization,
+            income_quadratic=retained * slope * utilization**2,
+            lower_ratio=lower_ratio,
+            upper_ratio=upper_ratio,
+            lower_marginal=inverse_linear / lower_ratio**2
+            + inverse_constant / lower_ratio**3,
+            upper_marginal=inverse_linear / upper_ratio**2
+            + inverse_constant / upper_ratio**3,
+        )
+
+    if kink > 0:
+        if min(kink, upper) >= 0:
+            segments.append(segment("high", 0.0, min(kink, upper)))
+        if upper >= kink:
+            segments.append(segment("low", kink, upper))
+    else:
+        segments.append(segment("low", 0.0, upper))
+
+    return tuple(segment for segment in segments if segment.lower <= segment.upper)
+
+
+def _validate_concavity(segment: _Segment, *, cached: bool = False) -> None:
+    slopes = (
+        segment.marginal_slope(segment.lower, cached=cached),
+        segment.marginal_slope(segment.upper, cached=cached),
+    )
+    if max(slopes) > 1e-18:
+        raise OptimizationError(
+            f"{segment.market.name}: income is not concave on the feasible "
+            f"{segment.branch}-utilization segment"
+        )
+
+
+def _allocation_at_price(
+    segment: _Segment,
+    price: float,
+    stats: SolveStats | None = None,
+    *,
+    adaptive: bool = False,
+    closed_form: bool = False,
+    cached: bool = False,
+) -> float:
+    if _marginal(segment, segment.lower, stats, cached=cached) <= price:
+        return segment.lower
+    if _marginal(segment, segment.upper, stats, cached=cached) >= price:
+        return segment.upper
+
+    if closed_form:
+        if stats is not None:
+            stats.closed_form_evaluations += 1
+        allocation = _closed_form_allocation(segment, price, cached=cached)
+        if allocation is not None:
+            return allocation
+        if stats is not None:
+            stats.closed_form_fallbacks += 1
+
+    lower, upper = segment.lower, segment.upper
+    iterations = 64 if adaptive else 80
+    tolerance = max(1e-7, segment.upper * 1e-14)
+    for _ in range(iterations):
+        if stats is not None:
+            stats.inner_iterations += 1
+        middle = (lower + upper) / 2
+        if adaptive and (upper - lower <= tolerance or middle in (lower, upper)):
+            break
+        if _marginal(segment, middle, stats, cached=cached) > price:
+            lower = middle
+        else:
+            upper = middle
+    return (lower + upper) / 2
+
+
+def _closed_form_allocation(
+    segment: _Segment, price: float, *, cached: bool = False
+) -> float | None:
+    linear = segment.inverse_linear
+    constant = segment.inverse_constant
+
+    if price == 0:
+        if linear == 0:
+            return None
+        roots = (-constant / linear,)
+    else:
+        cubic_linear = -linear / price
+        cubic_constant = -constant / price
+        half_constant = cubic_constant / 2
+        third_linear = cubic_linear / 3
+        discriminant = half_constant**2 + third_linear**3
+        if not math.isfinite(discriminant):
+            return None
+
+        scale = max(abs(half_constant**2), abs(third_linear**3), 1.0)
+        if discriminant >= -1e-14 * scale:
+            root_discriminant = math.sqrt(max(0.0, discriminant))
+            first = math.cbrt(-half_constant + root_discriminant)
+            second = (
+                -cubic_linear / (3 * first)
+                if first != 0
+                else math.cbrt(-half_constant - root_discriminant)
+            )
+            primary = first + second
+            roots = (primary, -primary / 2) if discriminant <= 1e-14 * scale else (primary,)
+        else:
+            radius = 2 * math.sqrt(-third_linear)
+            cosine = -half_constant / math.sqrt(-(third_linear**3))
+            angle = math.acos(max(-1.0, min(1.0, cosine))) / 3
+            roots = tuple(
+                radius * math.cos(angle - 2 * math.pi * index / 3)
+                for index in range(3)
+            )
+
+    lower = (
+        segment.lower_ratio
+        if cached
+        else 1 + segment.lower / segment.market.supply
+    )
+    upper = (
+        segment.upper_ratio
+        if cached
+        else 1 + segment.upper / segment.market.supply
+    )
+    tolerance = max(1e-14, upper * 1e-12)
+    valid = [
+        min(upper, max(lower, root))
+        for root in roots
+        if math.isfinite(root) and lower - tolerance <= root <= upper + tolerance
+    ]
+    if not valid:
+        return None
+
+    root = min(
+        valid,
+        key=lambda value: abs(price * value**3 - linear * value - constant),
+    )
+    allocation = segment.market.supply * (root - 1)
+    allocation = min(segment.upper, max(segment.lower, allocation))
+    error = abs(segment.marginal(allocation, cached=cached) - price)
+    if error > max(1e-12, abs(price) * 1e-9):
+        return None
+    return allocation
+
+
+def _allocation_price_slope(
+    segment: _Segment, allocation: float, *, cached: bool = False
+) -> float:
+    if allocation <= segment.lower or allocation >= segment.upper:
+        return 0.0
+    marginal_slope = segment.marginal_slope(allocation, cached=cached)
+    return 1 / marginal_slope if marginal_slope < 0 else 0.0
+
+
+def _next_price(
+    low: float,
+    high: float,
+    price: float,
+    residual: float,
+    slope: float,
+    stats: SolveStats | None,
+) -> float:
+    if slope < 0 and math.isfinite(slope):
+        candidate = price - residual / slope
+        margin = (high - low) * 0.01
+        if low + margin < candidate < high - margin:
+            if stats is not None:
+                stats.newton_steps += 1
+            return candidate
+    if stats is not None:
+        stats.newton_fallbacks += 1
+    return (low + high) / 2
+
+
+def _solve_segments(
+    segments: tuple[_Segment, ...],
+    budget: float,
+    stats: SolveStats | None = None,
+    *,
+    adaptive: bool = False,
+    closed_form: bool = False,
+    newton: bool = False,
+    cached: bool = False,
+) -> tuple[float, ...]:
+    if sum(segment.lower for segment in segments) > budget:
+        raise OptimizationError("infeasible segment lower bounds")
+    if sum(segment.upper for segment in segments) < budget:
+        raise OptimizationError("infeasible segment upper bounds")
+
+    for segment in segments:
+        _validate_concavity(segment, cached=cached)
+
+    if stats is not None:
+        stats.fixed_region_solves += 1
+    low_price = min(
+        _marginal(segment, segment.upper, stats, cached=cached)
+        for segment in segments
+    )
+    high_price = max(
+        _marginal(segment, segment.lower, stats, cached=cached)
+        for segment in segments
+    )
+
+    iterations = 64 if adaptive or newton else 100
+    allocation_tolerance = max(1e-7, budget * 1e-12)
+    price = (low_price + high_price) / 2
+    for _ in range(iterations):
+        if stats is not None:
+            stats.outer_iterations += 1
+        if (adaptive or newton) and price in (low_price, high_price):
+            break
+        allocations_at_price = tuple(
+            _allocation_at_price(
+                segment,
+                price,
+                stats,
+                adaptive=adaptive,
+                closed_form=closed_form,
+                cached=cached,
+            )
+            for segment in segments
+        )
+        total = sum(allocations_at_price)
+        residual = total - budget
+        if (adaptive or newton) and abs(residual) <= allocation_tolerance:
+            low_price = high_price = price
+            break
+        if residual > 0:
+            low_price = price
+        else:
+            high_price = price
+        if newton:
+            slope = sum(
+                _allocation_price_slope(segment, allocation, cached=cached)
+                for segment, allocation in zip(
+                    segments, allocations_at_price, strict=True
+                )
+            )
+            price = _next_price(
+                low_price,
+                high_price,
+                price,
+                residual,
+                slope,
+                stats,
+            )
+        else:
+            price = (low_price + high_price) / 2
+
+    allocations = [
+        _allocation_at_price(
+            segment,
+            (low_price + high_price) / 2,
+            stats,
+            adaptive=adaptive,
+            closed_form=closed_form,
+            cached=cached,
+        )
+        for segment in segments
+    ]
+    residual = budget - sum(allocations)
+
+    if residual > 0:
+        for index, segment in enumerate(segments):
+            change = min(residual, segment.upper - allocations[index])
+            allocations[index] += change
+            residual -= change
+    elif residual < 0:
+        for index, segment in enumerate(segments):
+            change = min(-residual, allocations[index] - segment.lower)
+            allocations[index] -= change
+            residual += change
+
+    if abs(residual) > max(1e-7, budget * 1e-12):
+        raise OptimizationError("could not satisfy the allocation constraint")
+    return tuple(allocations)
+
+
+def _lagrangian_bound(
+    region_options: tuple[tuple[_Segment, ...], ...],
+    budget: float,
+    stats: SolveStats | None,
+    *,
+    adaptive: bool,
+    closed_form: bool,
+    newton: bool,
+    cached: bool,
+) -> _DualResult:
+    if stats is not None:
+        stats.dual_solves += 1
+    for options in region_options:
+        for segment in options:
+            _validate_concavity(segment, cached=cached)
+
+    low_price = min(
+        _marginal(segment, segment.upper, stats, cached=cached)
+        for options in region_options
+        for segment in options
+    )
+    high_price = max(
+        _marginal(segment, segment.lower, stats, cached=cached)
+        for options in region_options
+        for segment in options
+    )
+
+    def evaluate(
+        price: float,
+    ) -> tuple[float, float, tuple[_Segment, ...], float]:
+        total_allocation = 0.0
+        total_slope = 0.0
+        dual_value = price * budget
+        selected = []
+        for options in region_options:
+            best_value = float("-inf")
+            best_allocation = 0.0
+            best_segment = options[0]
+            for segment in options:
+                allocation = _allocation_at_price(
+                    segment,
+                    price,
+                    stats,
+                    adaptive=adaptive,
+                    closed_form=closed_form,
+                    cached=cached,
+                )
+                value = (
+                    segment.income(allocation, cached=cached) - price * allocation
+                )
+                if value > best_value:
+                    best_value = value
+                    best_allocation = allocation
+                    best_segment = segment
+            total_allocation += best_allocation
+            total_slope += _allocation_price_slope(
+                best_segment, best_allocation, cached=cached
+            )
+            dual_value += best_value
+            selected.append(best_segment)
+        return total_allocation, dual_value, tuple(selected), total_slope
+
+    iterations = 64 if adaptive or newton else 100
+    price = (low_price + high_price) / 2
+    for _ in range(iterations):
+        if stats is not None:
+            stats.outer_iterations += 1
+        if price in (low_price, high_price):
+            break
+        total, _, _, slope = evaluate(price)
+        residual = total - budget
+        if residual > 0:
+            low_price = price
+        else:
+            high_price = price
+        price = (
+            _next_price(
+                low_price,
+                high_price,
+                price,
+                residual,
+                slope,
+                stats,
+            )
+            if newton
+            else (low_price + high_price) / 2
+        )
+
+    candidates = (
+        (low_price, evaluate(low_price)),
+        ((low_price + high_price) / 2, evaluate((low_price + high_price) / 2)),
+        (high_price, evaluate(high_price)),
+    )
+    price, (_, bound, segments, _) = min(
+        candidates, key=lambda candidate: candidate[1][1]
+    )
+    return _DualResult(bound, price, segments)
+
+
+def _heuristic_allocation(
+    region_options: tuple[tuple[_Segment, ...], ...],
+    budget: float,
+    stats: SolveStats | None,
+    *,
+    adaptive: bool,
+    closed_form: bool,
+    newton: bool,
+    cached: bool,
+) -> tuple[float, ...]:
+    relaxation = _lagrangian_bound(
+        region_options,
+        budget,
+        stats,
+        adaptive=adaptive,
+        closed_form=closed_form,
+        newton=newton,
+        cached=cached,
+    )
+    selected = list(relaxation.segments)
+
+    def lagrangian_value(segment: _Segment) -> float:
+        allocation = _allocation_at_price(
+            segment,
+            relaxation.price,
+            stats,
+            adaptive=adaptive,
+            closed_form=closed_form,
+            cached=cached,
+        )
+        return (
+            segment.income(allocation, cached=cached)
+            - relaxation.price * allocation
+        )
+
+    while sum(segment.lower for segment in selected) > budget:
+        replacements = []
+        for index, options in enumerate(region_options):
+            for alternative in options:
+                if alternative.lower < selected[index].lower:
+                    loss = lagrangian_value(selected[index]) - lagrangian_value(alternative)
+                    replacements.append((loss, index, alternative))
+        if not replacements:
+            raise OptimizationError("could not repair heuristic lower bounds")
+        _, index, replacement = min(replacements, key=lambda item: item[0])
+        selected[index] = replacement
+
+    while sum(segment.upper for segment in selected) < budget:
+        replacements = []
+        for index, options in enumerate(region_options):
+            for alternative in options:
+                if alternative.upper > selected[index].upper:
+                    loss = lagrangian_value(selected[index]) - lagrangian_value(alternative)
+                    replacements.append((loss, index, alternative))
+        if not replacements:
+            raise OptimizationError("could not repair heuristic upper bounds")
+        _, index, replacement = min(replacements, key=lambda item: item[0])
+        selected[index] = replacement
+
+    return _solve_segments(
+        tuple(selected),
+        budget,
+        stats,
+        adaptive=adaptive,
+        closed_form=closed_form,
+        newton=newton,
+        cached=cached,
+    )
+
+
+def solve(
+    markets: list[Market] | tuple[Market, ...],
+    budget: float,
+    *,
+    config: SolverConfig | None = None,
+    stats: SolveStats | None = None,
+) -> Solution:
+    config = config or SolverConfig()
+    if config.dual_bounds and not config.recursive_enumeration:
+        raise ValueError("dual_bounds requires recursive_enumeration")
+    if config.heuristic_incumbent and not config.dual_bounds:
+        raise ValueError("heuristic_incumbent requires dual_bounds")
+    if config.best_bound and not config.dual_bounds:
+        raise ValueError("best_bound requires dual_bounds")
+    if config.heuristic_only and not config.heuristic_incumbent:
+        raise ValueError("heuristic_only requires heuristic_incumbent")
+    markets = tuple(markets)
+    if not markets:
+        raise ValueError("at least one market is required")
+    if not isfinite(budget) or budget < 0:
+        raise ValueError("budget must be finite and nonnegative")
+    if budget == 0:
+        return Solution(budget, markets, (0.0,) * len(markets))
+
+    capacity = sum(
+        market.max_allocation if market.max_allocation is not None else budget
+        for market in markets
+    )
+    if capacity < budget:
+        raise OptimizationError("market allocation caps are below the budget")
+
+    best_allocations: tuple[float, ...] | None = None
+    best_income = float("-inf")
+    region_sets = tuple(_segments(market, budget) for market in markets)
+    if stats is not None:
+        stats.possible_region_combinations = math.prod(
+            len(regions) for regions in region_sets
+        )
+
+    def consider(segments: tuple[_Segment, ...]) -> None:
+        nonlocal best_allocations, best_income
+        if stats is not None:
+            stats.combinations_visited += 1
+        if sum(segment.lower for segment in segments) > budget:
+            if stats is not None:
+                stats.feasibility_prunes += 1
+            return
+        if sum(segment.upper for segment in segments) < budget:
+            if stats is not None:
+                stats.feasibility_prunes += 1
+            return
+        allocations = _solve_segments(
+            segments,
+            budget,
+            stats,
+            adaptive=config.adaptive_bisection,
+            closed_form=config.closed_form_inversion,
+            newton=config.newton_price_search,
+            cached=config.cached_segment_algebra,
+        )
+        income = sum(
+            market.income(allocation)
+            for market, allocation in zip(markets, allocations, strict=True)
+        )
+        if income > best_income:
+            best_income = income
+            best_allocations = allocations
+            if stats is not None:
+                stats.incumbent_updates += 1
+
+    if config.dual_bounds:
+        if config.heuristic_incumbent:
+            best_allocations = _heuristic_allocation(
+                region_sets,
+                budget,
+                stats,
+                adaptive=config.adaptive_bisection,
+                closed_form=config.closed_form_inversion,
+                newton=config.newton_price_search,
+                cached=config.cached_segment_algebra,
+            )
+            best_income = sum(
+                market.income(allocation)
+                for market, allocation in zip(
+                    markets, best_allocations, strict=True
+                )
+            )
+            if stats is not None:
+                stats.incumbent_updates += 1
+            if config.heuristic_only:
+                return Solution(budget, markets, best_allocations)
+
+        def bounds(
+            options: tuple[tuple[_Segment, ...], ...],
+        ) -> tuple[float, float]:
+            return (
+                sum(min(region.lower for region in choices) for choices in options),
+                sum(max(region.upper for region in choices) for choices in options),
+            )
+
+        def branch_index(
+            options: tuple[tuple[_Segment, ...], ...],
+        ) -> int | None:
+            return next(
+                (index for index, regions in enumerate(options) if len(regions) > 1),
+                None,
+            )
+
+        def upper_bound(options: tuple[tuple[_Segment, ...], ...]) -> float:
+            return _lagrangian_bound(
+                options,
+                budget,
+                stats,
+                adaptive=config.adaptive_bisection,
+                closed_form=config.closed_form_inversion,
+                newton=config.newton_price_search,
+                cached=config.cached_segment_algebra,
+            ).bound
+
+        def cannot_improve(bound: float) -> bool:
+            tolerance = max(1e-7, abs(best_income) * 1e-12)
+            return best_allocations is not None and bound <= best_income + tolerance
+
+        def visit_bounded(
+            options: tuple[tuple[_Segment, ...], ...],
+            lower: float,
+            upper: float,
+        ) -> None:
+            if stats is not None:
+                stats.nodes_visited += 1
+            if lower > budget or upper < budget:
+                if stats is not None:
+                    stats.feasibility_prunes += 1
+                return
+
+            bound = upper_bound(options)
+            if cannot_improve(bound):
+                if stats is not None:
+                    stats.bound_prunes += 1
+                return
+
+            index = branch_index(options)
+            if index is None:
+                consider(tuple(regions[0] for regions in options))
+                return
+
+            for segment in options[index]:
+                child = list(options)
+                child[index] = (segment,)
+                child_options = tuple(child)
+                child_lower, child_upper = bounds(child_options)
+                visit_bounded(
+                    child_options,
+                    child_lower,
+                    child_upper,
+                )
+
+        if config.best_bound:
+            root_lower, root_upper = bounds(region_sets)
+            queue: list[
+                tuple[
+                    float,
+                    int,
+                    tuple[tuple[_Segment, ...], ...],
+                    float,
+                    float,
+                ]
+            ] = []
+            serial = 0
+            if root_lower <= budget <= root_upper:
+                heapq.heappush(
+                    queue,
+                    (-upper_bound(region_sets), serial, region_sets, root_lower, root_upper),
+                )
+
+            while queue:
+                negative_bound, _, options, _, _ = heapq.heappop(queue)
+                node_bound = -negative_bound
+                if stats is not None:
+                    stats.nodes_visited += 1
+                if cannot_improve(node_bound):
+                    if stats is not None:
+                        stats.bound_prunes += 1
+                    continue
+
+                index = branch_index(options)
+                if index is None:
+                    consider(tuple(regions[0] for regions in options))
+                    continue
+
+                for segment in options[index]:
+                    child = list(options)
+                    child[index] = (segment,)
+                    child_options = tuple(child)
+                    child_lower, child_upper = bounds(child_options)
+                    if child_lower > budget or child_upper < budget:
+                        if stats is not None:
+                            stats.feasibility_prunes += 1
+                        continue
+                    child_bound = upper_bound(child_options)
+                    if cannot_improve(child_bound):
+                        if stats is not None:
+                            stats.bound_prunes += 1
+                        continue
+                    serial += 1
+                    heapq.heappush(
+                        queue,
+                        (
+                            -child_bound,
+                            serial,
+                            child_options,
+                            child_lower,
+                            child_upper,
+                        ),
+                    )
+        else:
+            root_lower, root_upper = bounds(region_sets)
+            visit_bounded(region_sets, root_lower, root_upper)
+    elif config.recursive_enumeration:
+        suffix_lower = [0.0] * (len(markets) + 1)
+        suffix_upper = [0.0] * (len(markets) + 1)
+        for index in range(len(markets) - 1, -1, -1):
+            suffix_lower[index] = suffix_lower[index + 1] + min(
+                segment.lower for segment in region_sets[index]
+            )
+            suffix_upper[index] = suffix_upper[index + 1] + max(
+                segment.upper for segment in region_sets[index]
+            )
+
+        def visit(
+            index: int,
+            selected: tuple[_Segment, ...],
+            lower: float,
+            upper: float,
+        ) -> None:
+            if stats is not None:
+                stats.nodes_visited += 1
+            if lower + suffix_lower[index] > budget:
+                if stats is not None:
+                    stats.feasibility_prunes += 1
+                return
+            if upper + suffix_upper[index] < budget:
+                if stats is not None:
+                    stats.feasibility_prunes += 1
+                return
+            if index == len(markets):
+                consider(selected)
+                return
+            for segment in region_sets[index]:
+                visit(
+                    index + 1,
+                    (*selected, segment),
+                    lower + segment.lower,
+                    upper + segment.upper,
+                )
+
+        visit(0, (), 0.0, 0.0)
+    else:
+        for segments in product(*region_sets):
+            consider(segments)
+
+    if best_allocations is None:
+        raise OptimizationError("no feasible allocation found")
+    return Solution(budget, markets, best_allocations)
+
+===== END FILE: src/yield_allocator/solver.py =====
+
+===== FILE: tests/test_solver.py =====
+from __future__ import annotations
+
+import json
+import shutil
+import subprocess
+import sys
+import unittest
+from pathlib import Path
+
+from yield_allocator.ablation import run_contributions, run_step_forward
+from yield_allocator.benchmark import generate_markets, run_benchmark
+from yield_allocator.cli import load_problem
+from yield_allocator.solver import PRESETS, Market, SolveStats, SolverConfig, solve
+
+
+ROOT = Path(__file__).parents[1]
+TEST_CASE = ROOT / "examples" / "two_markets.toml"
+
+
+class SolverTests(unittest.TestCase):
+    def test_borrow_curve_is_continuous_at_kink(self) -> None:
+        market = Market("market", 100, 85, 0.85, 0.03, 0.12)
+        at_kink = market.kink_allocation
+
+        self.assertAlmostEqual(market.borrow_rate(at_kink), 0.03 * 0.85)
+        self.assertAlmostEqual(
+            market.borrow_rate(at_kink - 1e-8),
+            market.borrow_rate(at_kink + 1e-8),
+            places=8,
+        )
+
+    def test_example_case_has_an_interior_solution(self) -> None:
+        budget, markets = load_problem(TEST_CASE)
+        solution = solve(markets, budget)
+
+        self.assertAlmostEqual(solution.allocations[0], 2_453_738.774526704, places=3)
+        self.assertAlmostEqual(solution.allocations[1], 5_046_261.225473296, places=3)
+        self.assertAlmostEqual(solution.portfolio_rate, 0.025627138862664)
+        self.assertAlmostEqual(solution.annual_income, 192_203.54146998)
+
+    def test_interior_solution_matches_grid_oracle(self) -> None:
+        markets = [
+            Market("one", 100, 80, 0.9, 0.04, 0.1),
+            Market("two", 100, 75, 0.9, 0.045, 0.1),
+        ]
+        solution = solve(markets, 10)
+        grid_step = 0.001
+        _, grid_allocation = max(
+            (
+                markets[0].income(index * grid_step)
+                + markets[1].income(10 - index * grid_step),
+                index * grid_step,
+            )
+            for index in range(10_001)
+        )
+
+        self.assertAlmostEqual(solution.allocations[0], grid_allocation, delta=grid_step)
+        self.assertAlmostEqual(sum(solution.allocations), 10)
+
+    def test_caps_are_respected(self) -> None:
+        markets = [
+            Market("one", 100, 50, 0.8, 0.04, 0.1, max_allocation=2),
+            Market("two", 100, 40, 0.8, 0.04, 0.1),
+        ]
+
+        solution = solve(markets, 5)
+
+        self.assertLessEqual(solution.allocations[0], 2)
+        self.assertAlmostEqual(sum(solution.allocations), 5)
+
+    def test_baseline_instrumentation(self) -> None:
+        budget, markets = load_problem(TEST_CASE)
+        stats = SolveStats()
+
+        solve(markets, budget, config=SolverConfig(), stats=stats)
+
+        self.assertEqual(stats.possible_region_combinations, 1)
+        self.assertEqual(stats.combinations_visited, 1)
+        self.assertEqual(stats.fixed_region_solves, 1)
+        self.assertGreater(stats.marginal_evaluations, 0)
+
+    def test_adaptive_bisection_matches_baseline_with_fewer_evaluations(self) -> None:
+        budget, markets = load_problem(TEST_CASE)
+        baseline_stats = SolveStats()
+        adaptive_stats = SolveStats()
+
+        baseline = solve(markets, budget, stats=baseline_stats)
+        adaptive = solve(
+            markets,
+            budget,
+            config=SolverConfig(adaptive_bisection=True),
+            stats=adaptive_stats,
+        )
+
+        self.assertAlmostEqual(adaptive.annual_income, baseline.annual_income, places=6)
+        for actual, expected in zip(
+            adaptive.allocations, baseline.allocations, strict=True
+        ):
+            self.assertAlmostEqual(actual, expected, places=3)
+        self.assertLess(
+            adaptive_stats.marginal_evaluations,
+            baseline_stats.marginal_evaluations,
+        )
+
+    def test_closed_form_inversion_matches_bisection(self) -> None:
+        markets = generate_markets(8, 10_000_000, 8642, "all-crossing")
+        baseline = solve(markets, 10_000_000)
+        stats = SolveStats()
+
+        closed_form = solve(
+            markets,
+            10_000_000,
+            config=SolverConfig(closed_form_inversion=True),
+            stats=stats,
+        )
+
+        self.assertAlmostEqual(closed_form.annual_income, baseline.annual_income, places=6)
+        for actual, expected in zip(
+            closed_form.allocations, baseline.allocations, strict=True
+        ):
+            self.assertAlmostEqual(actual, expected, places=3)
+        self.assertGreater(stats.closed_form_evaluations, 0)
+        self.assertEqual(stats.closed_form_fallbacks, 0)
+        self.assertEqual(stats.inner_iterations, 0)
+
+    def test_newton_price_search_matches_bisection(self) -> None:
+        markets = generate_markets(8, 10_000_000, 9753, "all-crossing")
+        baseline_stats = SolveStats()
+        baseline = solve(markets, 10_000_000, stats=baseline_stats)
+        stats = SolveStats()
+
+        newton = solve(
+            markets,
+            10_000_000,
+            config=SolverConfig(newton_price_search=True),
+            stats=stats,
+        )
+
+        self.assertAlmostEqual(newton.annual_income, baseline.annual_income, places=6)
+        for actual, expected in zip(
+            newton.allocations, baseline.allocations, strict=True
+        ):
+            self.assertAlmostEqual(actual, expected, places=3)
+        self.assertGreater(stats.newton_steps, 0)
+        self.assertLess(stats.outer_iterations, baseline_stats.outer_iterations)
+
+    def test_recommended_preset_matches_baseline(self) -> None:
+        markets = generate_markets(8, 10_000_000, 7531, "all-crossing")
+        baseline = solve(markets, 10_000_000)
+        stats = SolveStats()
+
+        recommended = solve(
+            markets,
+            10_000_000,
+            config=PRESETS["recommended"],
+            stats=stats,
+        )
+
+        self.assertAlmostEqual(
+            recommended.annual_income, baseline.annual_income, places=6
+        )
+        self.assertGreater(stats.closed_form_evaluations, 0)
+        self.assertEqual(stats.newton_steps, 0)
+        self.assertTrue(PRESETS["recommended"].cached_segment_algebra)
+
+    def test_cached_segment_algebra_matches_direct_evaluation(self) -> None:
+        markets = generate_markets(8, 10_000_000, 6420, "all-crossing")
+        baseline_stats = SolveStats()
+        baseline = solve(markets, 10_000_000, stats=baseline_stats)
+        stats = SolveStats()
+
+        cached = solve(
+            markets,
+            10_000_000,
+            config=SolverConfig(cached_segment_algebra=True),
+            stats=stats,
+        )
+
+        self.assertAlmostEqual(cached.annual_income, baseline.annual_income, places=6)
+        for actual, expected in zip(
+            cached.allocations, baseline.allocations, strict=True
+        ):
+            self.assertAlmostEqual(actual, expected, places=3)
+        self.assertEqual(
+            stats.marginal_evaluations, baseline_stats.marginal_evaluations
+        )
+
+    def test_recursive_enumeration_prunes_infeasible_subtrees(self) -> None:
+        markets = generate_markets(6, 10_000_000, 1234, "all-crossing")
+        baseline = solve(markets, 10_000_000)
+        stats = SolveStats()
+
+        recursive = solve(
+            markets,
+            10_000_000,
+            config=SolverConfig(recursive_enumeration=True),
+            stats=stats,
+        )
+
+        self.assertAlmostEqual(recursive.annual_income, baseline.annual_income, places=6)
+        self.assertEqual(stats.possible_region_combinations, 64)
+        self.assertLess(stats.combinations_visited, 64)
+        self.assertGreater(stats.feasibility_prunes, 0)
+
+    def test_dual_bounds_match_baseline_and_prune(self) -> None:
+        markets = generate_markets(8, 10_000_000, 4321, "all-crossing")
+        baseline = solve(
+            markets,
+            10_000_000,
+            config=SolverConfig(
+                adaptive_bisection=True,
+                recursive_enumeration=True,
+            ),
+        )
+        stats = SolveStats()
+
+        bounded = solve(
+            markets,
+            10_000_000,
+            config=SolverConfig(
+                adaptive_bisection=True,
+                recursive_enumeration=True,
+                dual_bounds=True,
+            ),
+            stats=stats,
+        )
+
+        self.assertAlmostEqual(bounded.annual_income, baseline.annual_income, places=6)
+        self.assertGreater(stats.dual_solves, 0)
+        self.assertGreater(stats.bound_prunes, 0)
+
+    def test_heuristic_incumbent_preserves_exact_result(self) -> None:
+        markets = generate_markets(8, 10_000_000, 9876, "all-crossing")
+        exact_config = SolverConfig(
+            adaptive_bisection=True,
+            recursive_enumeration=True,
+            dual_bounds=True,
+        )
+        baseline = solve(markets, 10_000_000, config=exact_config)
+        stats = SolveStats()
+
+        initialized = solve(
+            markets,
+            10_000_000,
+            config=SolverConfig(
+                adaptive_bisection=True,
+                recursive_enumeration=True,
+                dual_bounds=True,
+                heuristic_incumbent=True,
+            ),
+            stats=stats,
+        )
+
+        self.assertAlmostEqual(initialized.annual_income, baseline.annual_income, places=6)
+        self.assertGreater(stats.incumbent_updates, 0)
+
+    def test_best_bound_preserves_exact_result(self) -> None:
+        markets = generate_markets(8, 10_000_000, 2468, "all-crossing")
+        depth_first = solve(
+            markets,
+            10_000_000,
+            config=SolverConfig(
+                adaptive_bisection=True,
+                recursive_enumeration=True,
+                dual_bounds=True,
+                heuristic_incumbent=True,
+            ),
+        )
+        stats = SolveStats()
+
+        best_bound = solve(
+            markets,
+            10_000_000,
+            config=SolverConfig(
+                adaptive_bisection=True,
+                recursive_enumeration=True,
+                dual_bounds=True,
+                heuristic_incumbent=True,
+                best_bound=True,
+            ),
+            stats=stats,
+        )
+
+        self.assertAlmostEqual(best_bound.annual_income, depth_first.annual_income, places=6)
+        self.assertGreater(stats.nodes_visited, 0)
+
+    def test_heuristic_only_returns_feasible_bounded_result(self) -> None:
+        markets = generate_markets(8, 10_000_000, 1357, "all-crossing")
+        exact = solve(
+            markets,
+            10_000_000,
+            config=SolverConfig(
+                adaptive_bisection=True,
+                recursive_enumeration=True,
+                dual_bounds=True,
+                heuristic_incumbent=True,
+                best_bound=True,
+            ),
+        )
+        stats = SolveStats()
+
+        heuristic = solve(
+            markets,
+            10_000_000,
+            config=SolverConfig(
+                adaptive_bisection=True,
+                recursive_enumeration=True,
+                dual_bounds=True,
+                heuristic_incumbent=True,
+                best_bound=True,
+                heuristic_only=True,
+            ),
+            stats=stats,
+        )
+
+        self.assertAlmostEqual(sum(heuristic.allocations), 10_000_000)
+        self.assertLessEqual(heuristic.annual_income, exact.annual_income + 1e-6)
+        self.assertEqual(stats.nodes_visited, 0)
+
+
+class EntrypointTests(unittest.TestCase):
+    def assert_entrypoint(self, command: list[str]) -> None:
+        result = subprocess.run(
+            [*command, str(TEST_CASE), "--json"],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        output = json.loads(result.stdout)
+        self.assertEqual(output["budget"], 7_500_000)
+        self.assertEqual(len(output["markets"]), 2)
+
+    def test_module_entrypoint(self) -> None:
+        self.assert_entrypoint([sys.executable, "-m", "yield_allocator"])
+
+    def test_script_entrypoint(self) -> None:
+        command = shutil.which("yield-allocate")
+        self.assertIsNotNone(command)
+        self.assert_entrypoint([command])
+
+    def test_benchmark_entrypoint(self) -> None:
+        command = shutil.which("yield-benchmark")
+        self.assertIsNotNone(command)
+        result = subprocess.run(
+            [command, "--max-markets", "2", "--trials", "1", "--json"],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        output = json.loads(result.stdout)
+        self.assertEqual(output["results"][0]["markets"], 2)
+
+    def test_solver_feature_override(self) -> None:
+        command = shutil.which("yield-allocate")
+        self.assertIsNotNone(command)
+        result = subprocess.run(
+            [
+                command,
+                str(TEST_CASE),
+                "--adaptive-bisection",
+                "--closed-form-inversion",
+                "--newton-price-search",
+                "--cached-segment-algebra",
+                "--recursive-enumeration",
+                "--json",
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(json.loads(result.stdout)["budget"], 7_500_000)
+
+    def test_ablation_entrypoint(self) -> None:
+        command = shutil.which("yield-ablate")
+        self.assertIsNotNone(command)
+        result = subprocess.run(
+            [command, str(TEST_CASE), "--trials", "1", "--json"],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        output = json.loads(result.stdout)
+        self.assertEqual(output[0]["candidate"], "baseline")
+        self.assertTrue(output[0]["exact"])
+
+
+class BenchmarkTests(unittest.TestCase):
+    def test_market_generation_is_repeatable(self) -> None:
+        first = generate_markets(4, 10_000_000, 1234)
+        second = generate_markets(4, 10_000_000, 1234)
+
+        self.assertEqual(first, second)
+
+    def test_all_crossing_profile_crosses_within_budget(self) -> None:
+        markets = generate_markets(4, 10_000_000, 1234, "all-crossing")
+
+        self.assertTrue(
+            all(0 < market.kink_allocation < 10_000_000 for market in markets)
+        )
+
+    def test_small_benchmark(self) -> None:
+        rows = run_benchmark(max_markets=3, trials=1, seed=1234)
+
+        self.assertEqual([row.markets for row in rows], [2, 3])
+        self.assertTrue(all(row.median_ms > 0 for row in rows))
+
+    def test_contribution_factors_reproduce_total_speedup(self) -> None:
+        progress = []
+        result = run_contributions(
+            TEST_CASE,
+            trials=1,
+            progress=lambda completed, total, name: progress.append(
+                (completed, total, name)
+            ),
+        )
+        product = 1.0
+        for contribution in result.contributions:
+            product *= contribution.attributed_speedup
+
+        self.assertAlmostEqual(product, result.total_speedup, places=10)
+        self.assertAlmostEqual(
+            sum(item.log_speedup_share for item in result.contributions),
+            1.0,
+            places=10,
+        )
+        configurations = len(result.configuration_seconds)
+        self.assertEqual(progress[-1][:2], (configurations, configurations))
+
+    def test_heuristic_only_exactness_is_measured(self) -> None:
+        results = run_step_forward(TEST_CASE, trials=1)
+        heuristic = results[-1]
+
+        self.assertEqual(heuristic.candidate, "heuristic_only")
+        self.assertEqual(
+            heuristic.exact,
+            heuristic.objective_gap <= 1e-10,
+        )
+
+
+if __name__ == "__main__":
+    unittest.main()
+
+===== END FILE: tests/test_solver.py =====
+
+===== FILE: uv.lock =====
+version = 1
+revision = 3
+requires-python = ">=3.11"
+
+[[package]]
+name = "yield-allocator"
+version = "0.1.0"
+source = { editable = "." }
+
+===== END FILE: uv.lock =====
